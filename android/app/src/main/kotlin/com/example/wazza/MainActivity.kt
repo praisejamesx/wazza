@@ -1,3 +1,4 @@
+// android/app/src/main/kotlin/com/example/wazza/MainActivity.kt
 package com.example.wazza
 
 import android.content.Intent
@@ -54,7 +55,8 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    // ✅ FIXED: Use non-nullable Intent
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         this.intent = intent
     }

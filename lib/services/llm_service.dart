@@ -1,13 +1,12 @@
 // lib/services/llm_service.dart
 import 'dart:async';
-import 'package:flutter_llama/flutter_llama.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/services/db_service.dart';
-import 'dart:io';
+import 'package:llama_flutter_android/llama_flutter_android.dart';
 
 class LLMService {
-  FlutterLlama? _llama;
   AIModel? _currentModel;
+  LlamaController? _controller;
   bool _isGenerating = false;
 
   static final LLMService _instance = LLMService._internal();
@@ -15,106 +14,94 @@ class LLMService {
   LLMService._internal();
 
   Future<void> loadModel(AIModel model) async {
-    if (_currentModel?.id == model.id && _llama != null) return;
+    if (_currentModel?.id == model.id && _controller != null) return;
 
-    // Unload previous model if any
-    if (_llama != null) {
-      await _llama!.unloadModel();
-      // No need to null _llama since it's a singleton, but we can recreate for clarity
-      _llama = null;
+    // Clean up previous controller
+    if (_controller != null) {
+      await _controller!.dispose();
+      _controller = null;
     }
 
-    if (model.localPath == null || !await File(model.localPath!).exists()) {
-      throw Exception('Model file not found at ${model.localPath}');
+    if (model.localPath == null || model.localPath!.isEmpty) {
+      throw Exception('Model has no valid local path');
     }
 
-    _llama = FlutterLlama.instance;  // Use the singleton
+    _controller = LlamaController();
 
-    final config = LlamaConfig(
+    await _controller!.loadModel(
       modelPath: model.localPath!,
-      nThreads: 4,              // Reasonable for low-end phones (adjust based on device)
-      nGpuLayers: -1,           // Full offload if GPU available (Metal/Vulkan)
-      contextSize: 2048,        // Safe starting point; 1024–4096 for low RAM
-      batchSize: 512,
-      useGpu: true,             // Auto-falls back to CPU if no GPU accel
-      verbose: false,           // Quieter on mobile
+      contextSize: 2048,          // Safe for low-end phones; adjust to 1024-4096
+      threads: 4,                 // ← FIXED: use 'threads' not 'nThreads'
+      // gpuLayers: 0,            // Uncomment & set >0 if you compiled Vulkan support
     );
-
-    final success = await _llama!.loadModel(config);
-    if (!success) {
-      throw Exception('Failed to load model');
-    }
 
     _currentModel = model;
   }
 
   Stream<String> generate(String prompt) async* {
-    if (_isGenerating || _llama == null) {
-      yield "Model not loaded or busy.";
+    if (_isGenerating || _controller == null) {
+      yield "Model not loaded or currently busy.";
       return;
     }
 
     final db = DBService();
     final count = await db.getMessageCountToday();
     if (count >= DBService.freeTierLimit) {
-      yield "Daily limit reached.";
+      yield "Daily free tier limit reached. Please try again tomorrow.";
       return;
     }
     await db.incrementMessageCount();
 
     _isGenerating = true;
 
-    // Manual formatting based on model templateType
-    final formattedPrompt = _formatPrompt(prompt, _currentModel!.templateType);
+    final messages = [
+      // Optional: system prompt helps Qwen/others be more accurate & less hallucinatory
+      ChatMessage(role: 'system', content: 'You are a helpful, accurate AI assistant. Stick to facts and be concise.'),
+      ChatMessage(role: 'user', content: prompt),
+    ];
 
     try {
-      final params = GenerationParams(
-        prompt: formattedPrompt,
+      await for (final token in _controller!.generateChat(
+        messages: messages,
+        template: _getTemplateString(_currentModel!.templateType),
         temperature: 0.7,
         topP: 0.95,
         topK: 40,
         maxTokens: 512,
-        repeatPenalty: 1.1,
-      );
-
-      await for (final token in _llama!.generateStream(params)) {
+        // Optional extras if needed:
+        // repeatPenalty: 1.1,
+      )) {
         if (!_isGenerating) break;
         yield token;
       }
     } catch (e) {
-      yield "Error: $e";
+      yield "Generation error: $e";
     } finally {
       _isGenerating = false;
     }
   }
 
-  String _formatPrompt(String userPrompt, TemplateType type) {
-    const systemPrompt = 'You are a helpful, accurate assistant. Stick to facts.';  // Helps reduce hallucinations
-
+  String _getTemplateString(TemplateType type) {
     switch (type) {
-      case TemplateType.chatml:  // Qwen, many others
-        return '<|im_start|>system\n$systemPrompt<|im_end|>\n<|im_start|>user\n$userPrompt<|im_end|>\n<|im_start|>assistant\n';
-      case TemplateType.llama2:  // TinyLlama, older Llama variants
-        return '[INST] <<SYS>> $systemPrompt <</SYS>> $userPrompt [/INST]';
-      case TemplateType.phi:     // Phi-3 / Phi series
-        return '<|system|> $systemPrompt <|end|>\n<|user|> $userPrompt <|end|>\n<|assistant|>';
-      case TemplateType.gemma:   // Gemma
-        return '<start_of_turn>system $systemPrompt <end_of_turn>\n<start_of_turn>user $userPrompt <end_of_turn>\n<start_of_turn>model';
-      case TemplateType.llama3:  // Llama-3 style, MobileLLaMA etc.
-        return '<|begin_of_text|><|start_header_id|>system<|end_header_id|> $systemPrompt <|eot_id|><|start_header_id|>user<|end_header_id|> $userPrompt <|eot_id|><|start_header_id|>assistant<|end_header_id|>';
+      case TemplateType.chatml:   return 'chatml';    // Qwen, good default
+      case TemplateType.llama2:   return 'llama2';
+      case TemplateType.phi:      return 'phi';
+      case TemplateType.gemma:    return 'gemma';
+      case TemplateType.llama3:   return 'llama3';
+      // Add fallback or default if unknown
+      default: return 'chatml';
     }
   }
 
   void stop() {
     _isGenerating = false;
-    // No explicit stop/cancel in the basic API; generation stops when stream is no longer awaited
-    // If the package adds a stop() method in future, call it here
+    _controller?.stop();  // Stops ongoing generation if supported
   }
 
-  Future<void> unload() async {  // Renamed for clarity; call this instead of dispose
-    if (_llama != null) {
-      await _llama!.unloadModel();
-      _llama = null;  // Optional, since singleton, but helps GC
+  Future<void> dispose() async {
+    if (_controller != null) {
+      await _controller!.dispose();
+      _controller = null;
     }
   }
 }
