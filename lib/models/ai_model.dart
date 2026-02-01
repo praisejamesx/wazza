@@ -9,6 +9,8 @@ class AIModel {
   final bool isDownloaded;
   final String? localPath;
   final TemplateType templateType;
+  final String description;
+  final String bestFor;
 
   AIModel({
     required this.id,
@@ -18,6 +20,8 @@ class AIModel {
     this.isDownloaded = false,
     this.localPath,
     required this.templateType,
+    required this.description,
+    required this.bestFor,
   });
 
   // Helper to auto-assign template based on model ID
@@ -30,6 +34,7 @@ class AIModel {
     return TemplateType.chatml; // default fallback
   }
 
+  
   static List<AIModel> remoteModels = [
     AIModel(
       id: 'tinyllama',
@@ -37,6 +42,8 @@ class AIModel {
       sizeMB: 640,
       quant: 'Q4_K_M',
       templateType: TemplateType.llama2,
+      description: 'Ultra-lightweight model that runs fast even on 1GB RAM phones.',
+      bestFor: 'General chat, simple Q&A, offline use.',
     ),
     AIModel(
       id: 'phi2',
@@ -44,8 +51,10 @@ class AIModel {
       sizeMB: 1800,
       quant: 'Q5_K_M',
       templateType: TemplateType.phi,
+      description: 'Compact reasoning model with strong logic and coding skills.',
+      bestFor: 'Math, code, technical explanations.',
     ),
-    // Add more models here as needed
+    // Add more models in future versions
   ];
 
   static List<AIModel> downloadedModels = [];
@@ -59,6 +68,8 @@ class AIModel {
       isDownloaded: true,
       localPath: localPath,
       templateType: remoteModel.templateType, // ✅ Preserve templateType
+      description: remoteModel.description,
+      bestFor: remoteModel.bestFor
     );
     downloadedModels.add(downloaded);
   }

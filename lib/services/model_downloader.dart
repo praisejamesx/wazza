@@ -5,8 +5,10 @@ import 'package:http/http.dart' as http;
 import 'package:wazza/models/ai_model.dart';
 
 class ModelDownloader {
-  static Future<String> downloadModel(AIModel model) async {
-    // Use real Hugging Face URLs
+  static Future<String> downloadModel(
+    AIModel model,
+    void Function(int percentage) onProgress,
+  ) async {
     final urls = {
       'tinyllama': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf?download=true',
       'phi2': 'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf?download=true',
@@ -27,6 +29,9 @@ class ModelDownloader {
     final response = await http.get(Uri.parse(url));
     if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
 
+    // Simple progress: just report 100% at end
+    // (True streaming requires dio or custom networking)
+    onProgress(100);
     await file.writeAsBytes(response.bodyBytes);
     return filePath;
   }

@@ -71,15 +71,18 @@ class _ModelTile extends StatelessWidget {
     );
 
     try {
-      if (!context.mounted) return;
-      final path = await ModelDownloader.downloadModel(model);
+      final path = await ModelDownloader.downloadModel(model, (progress) {});
       AIModel.markAsDownloaded(model, path);
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${model.name} ready!')));
+      if (context.mounted) Navigator.pop(context);
+      
+      if (context.mounted){
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${model.name} ready!')));
+      }
     } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted){
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      }
     }
   }
 }

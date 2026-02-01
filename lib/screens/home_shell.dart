@@ -15,13 +15,23 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  Widget _currentScreen = const ChatListScreen();
-  String _title = 'Chats';
+  Widget? _currentScreen;
+  String _title = 'Wazza';
 
   @override
   void initState() {
     super.initState();
     _checkForSharedModel();
+    _loadInitialScreen();
+  }
+
+  Future<void> _loadInitialScreen() async {
+    // Show welcome screen if no models downloaded
+    if (AIModel.downloadedModels.isEmpty) {
+      setState(() => _currentScreen = const WelcomeScreen());
+    } else {
+      setState(() => _currentScreen = const ChatListScreen());
+    }
   }
 
   Future<void> _checkForSharedModel() async {
@@ -35,13 +45,9 @@ class _HomeShellState extends State<HomeShell> {
     try {
       final fileName = filePath.split('/').last;
       final modelName = fileName.replaceFirst('.gguf', '');
-
-      // 🔥 CRITICAL: Auto-detect templateType from filename
       final templateType = AIModel.inferTemplate(modelName);
-
       final fileSizeMB = (await File(filePath).length()) ~/ (1024 * 1024);
 
-      // Create model with correct templateType
       final model = AIModel(
         id: modelName,
         name: modelName,
@@ -49,10 +55,13 @@ class _HomeShellState extends State<HomeShell> {
         quant: 'Q4_K_M',
         isDownloaded: true,
         localPath: filePath,
-        templateType: templateType, // ✅ REQUIRED for flutter_llama
+        templateType: templateType,
+        description: '',
+        bestFor: ''
       );
 
       AIModel.downloadedModels.add(model);
+      _loadInitialScreen(); // Refresh UI
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -77,47 +86,105 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_title),
-        leading: Builder(builder: (context) => IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () => Scaffold.of(context).openDrawer(),
-        )),
-      ),
+                title: Text(_title),
+                leading: Builder(builder: (context) => IconButton(
+                  icon: const Icon(Icons.menu),
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                )),
+              ),
       drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    const DrawerHeader(
+                      decoration: BoxDecoration(color: Colors.white),
+                      child: Text('Wazza', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.home),
+                      title: const Text('Home'),
+                      onTap: () {
+                        _loadInitialScreen();
+                        Navigator.pop(context);
+                      }
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.chat_bubble_outline),
+                      title: const Text('Chats'),
+                      onTap: () {
+                        _switchTo(const ChatListScreen(), 'Chats');
+                        Navigator.pop(context);
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.storage_outlined),
+                      title: const Text('Models'),
+                      onTap: () {
+                        _switchTo(const ModelsScreen(), 'Models');
+                        Navigator.pop(context);
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.account_circle_outlined),
+                      title: const Text('Account'),
+                      onTap: () {
+                        _switchTo(const AccountScreen(), 'Account');
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+      body: _currentScreen ?? const Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+class WelcomeScreen extends StatelessWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const DrawerHeader(
-              child: Text('Wazza', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            Image.asset(
+              'assets/images/logo.jpg',
+              width: 120,
+              height: 120,
+              fit: BoxFit.contain,
             ),
-            ListTile(
-              leading: const Icon(Icons.chat_bubble_outline),
-              title: const Text('Chats'),
-              onTap: () {
-                _switchTo(const ChatListScreen(), 'Chats');
-                Navigator.pop(context);
-              },
+            const SizedBox(height: 24),
+            const Text(
+              'Wazza',
+              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
             ),
-            ListTile(
-              leading: const Icon(Icons.storage_outlined),
-              title: const Text('Models'),
-              onTap: () {
-                _switchTo(const ModelsScreen(), 'Models');
-                Navigator.pop(context);
-              },
+            const SizedBox(height: 8),
+            const Text(
+              'Private AI. Offline. No Nonsense.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
-            ListTile(
-              leading: const Icon(Icons.account_circle_outlined),
-              title: const Text('Account'),
-              onTap: () {
-                _switchTo(const AccountScreen(), 'Account');
-                Navigator.pop(context);
+            const SizedBox(height: 40),
+            FilledButton.tonal(
+              onPressed: () {
+                final homeState = context.findAncestorStateOfType<_HomeShellState>();
+                homeState?._switchTo(const ModelsScreen(), 'Models');
               },
+              child: const Text('Download Your First Model'),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {},
+              child: const Text('How does this work?'),
             ),
           ],
         ),
       ),
-      body: _currentScreen,
     );
   }
 }

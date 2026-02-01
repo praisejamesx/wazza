@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/services/model_downloader.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:wazza/services/db_service.dart';
 import 'dart:io' show Platform;
 
 class ModelsScreen extends StatelessWidget {
@@ -103,17 +104,29 @@ class _RemoteModelCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: ListTile(
-        title: Text(model.name),
-        subtitle: Text('${model.sizeMB} MB • ${model.quant}'),
-        trailing: OutlinedButton(
-          style: OutlinedButton.styleFrom(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size(70, 32),
-          ),
-          onPressed: () => _downloadModel(context, model),
-          child: const Text('Download', style: TextStyle(fontSize: 12)),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(model.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(model.description, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+            const SizedBox(height: 4),
+            Text('Best for: ${model.bestFor}', style: const TextStyle(fontSize: 12)),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('${model.sizeMB} MB • ${model.quant}'),
+                OutlinedButton(
+                  onPressed: () => _downloadModel(context, model),
+                  child: const Text('Download', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -124,21 +137,33 @@ class _RemoteModelCard extends StatelessWidget {
 
     showDialog(
       context: context,
-      builder: (context) => const AlertDialog(
-        content: Column(
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('Downloading ${model.name}'),
+        content: const Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Downloading...'),
+            Text('Please keep the app open.'),
             SizedBox(height: 8),
-            LinearProgressIndicator(),
+            Text('This may take 2-5 minutes on mobile data.'),
+            SizedBox(height: 16),
+            LinearProgressIndicator(minHeight: 4),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
       ),
     );
 
     try {
-      final path = await ModelDownloader.downloadModel(model);
+      final path = await ModelDownloader.downloadModel(model, (progress) {});
       AIModel.markAsDownloaded(model, path);
+      final db = DBService();
+      await db.saveDownloadedModel(AIModel.downloadedModels.last);
       if (context.mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(

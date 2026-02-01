@@ -62,26 +62,31 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: ListView.builder(
-            reverse: true,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            itemCount: _messages.length,
-            itemBuilder: (context, index) {
-              final message = _messages[_messages.length - 1 - index];
-              return MessageWidget(message: message);
-            },
+    return SafeArea (
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              reverse: true,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final message = _messages[_messages.length - 1 - index];
+                return MessageWidget(message: message);
+              },
+            ),
           ),
-        ),
-        InputBar(
-          controller: _textController,
-          onSend: _sendMessage,
-          selectedModel: _selectedModel!,
-          onModelSelected: (model) => setState(() => _selectedModel = model),
-        ),
-      ],
+          Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: InputBar(
+              controller: _textController,
+              onSend: _sendMessage,
+              selectedModel: _selectedModel!,
+              onModelSelected: (model) => setState(() => _selectedModel = model),
+            ),
+          )
+        ],
+      ),
     );
   }
 }

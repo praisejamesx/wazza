@@ -3,6 +3,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:wazza/models/chat.dart';
 import 'package:wazza/models/message.dart';
+import 'package:wazza/models/ai_model.dart';
+import 'package:flutter/foundation.dart';
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -44,6 +46,16 @@ class DBService {
           CREATE TABLE usage(
             date TEXT PRIMARY KEY,
             message_count INTEGER
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE downloaded_models(
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            size_mb INTEGER,
+            quant TEXT,
+            local_path TEXT,
+            template_type TEXT
           )
         ''');
       },
@@ -105,6 +117,42 @@ class DBService {
     } else {
       await db.update('usage', {'message_count': count + 1}, where: 'date = ?', whereArgs: [today]);
     }
+  }
+
+  // Save downloaded model
+Future<void> saveDownloadedModel(AIModel model) async {
+  final db = await database;
+  await db.insert('downloaded_models', {
+    'id': model.id,
+    'name': model.name,
+    'size_mb': model.sizeMB,
+    'quant': model.quant,
+    'local_path': model.localPath,
+    'template_type': describeEnum(model.templateType),
+  });
+}
+
+  // Load downloaded models on startup
+  Future<List<AIModel>> getDownloadedModels() async {
+    final db = await database;
+    final maps = await db.query('downloaded_models');
+    return maps.map((e) {
+      final type = TemplateType.values.firstWhere(
+        (t) => describeEnum(t) == e['template_type'] as String,
+        orElse: () => TemplateType.chatml,
+      );
+      return AIModel(
+        id: e['id'] as String,
+        name: e['name'] as String,
+        sizeMB: e['size_mb'] as int,
+        quant: e['quant'] as String,
+        isDownloaded: true,
+        localPath: e['local_path'] as String?,
+        templateType: type,
+        description: '',
+        bestFor: ''
+      );
+    }).toList();
   }
 
   static const int freeTierLimit = 10;
