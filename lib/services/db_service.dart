@@ -4,7 +4,6 @@ import 'package:path/path.dart';
 import 'package:wazza/models/chat.dart';
 import 'package:wazza/models/message.dart';
 import 'package:wazza/models/ai_model.dart';
-import 'package:flutter/foundation.dart';
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -22,59 +21,133 @@ class DBService {
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'wazza.db');
+    
     return await openDatabase(
       path,
       version: 1,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE chats(
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            created_at INTEGER
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE messages(
-            id TEXT PRIMARY KEY,
-            chat_id TEXT,
-            text TEXT,
-            is_user INTEGER,
-            created_at INTEGER
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE usage(
-            date TEXT PRIMARY KEY,
-            message_count INTEGER
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE downloaded_models(
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            size_mb INTEGER,
-            quant TEXT,
-            local_path TEXT,
-            template_type TEXT
-          )
-        ''');
-      },
+      onCreate: _createTables,
     );
   }
 
-  // Chats
+  Future<void> _createTables(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS chats(
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        created_at INTEGER
+      )
+    ''');
+    
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT,
+        text TEXT,
+        is_user INTEGER,
+        created_at INTEGER
+      )
+    ''');
+    
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS usage(
+        date TEXT PRIMARY KEY,
+        message_count INTEGER DEFAULT 0
+      )
+    ''');
+    
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS downloaded_models(
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        size_mb INTEGER,
+        quant TEXT,
+        local_path TEXT,
+        template_type TEXT,
+        description TEXT,
+        best_for TEXT
+      )
+    ''');
+  }
+
+  // Save downloaded model
+  Future<void> saveDownloadedModel(AIModel model) async {
+    final db = await database;
+    await db.insert(
+      'downloaded_models',
+      {
+        'id': model.id,
+        'name': model.name,
+        'size_mb': model.sizeMB,
+        'quant': model.quant,
+        'local_path': model.localPath,
+        'template_type': model.templateType.name,
+        'description': model.description,
+        'best_for': model.bestFor,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  // Load downloaded models
+  Future<List<AIModel>> getDownloadedModels() async {
+    try {
+      final db = await database;
+      final maps = await db.query('downloaded_models');
+      
+      return maps.map((e) {
+        final templateType = TemplateType.values.firstWhere(
+          (t) => t.name == e['template_type'] as String?,
+          orElse: () => TemplateType.chatml,
+        );
+        
+        return AIModel(
+          id: e['id'] as String,
+          name: e['name'] as String,
+          sizeMB: e['size_mb'] as int,
+          quant: e['quant'] as String,
+          isDownloaded: true,
+          localPath: e['local_path'] as String?,
+          templateType: templateType,
+          description: e['description'] as String? ?? '',
+          bestFor: e['best_for'] as String? ?? '',
+        );
+      }).toList();
+    } catch (e) {
+      // If there's an error (like table doesn't exist), return empty list
+      return [];
+    }
+  }
+
+  // Delete model from DB
+  Future<void> deleteDownloadedModel(String modelId) async {
+    try {
+      final db = await database;
+      await db.delete(
+        'downloaded_models',
+        where: 'id = ?',
+        whereArgs: [modelId],
+      );
+    } catch (e) {
+      // Ignore errors if table doesn't exist
+    }
+  }
+
+  // Rest of your existing methods remain...
   Future<void> saveChat(Chat chat) async {
     final db = await database;
     await db.insert('chats', chat.toMap());
   }
 
   Future<List<Chat>> getChats() async {
-    final db = await database;
-    final maps = await db.query('chats', orderBy: 'created_at DESC');
-    return maps.map((e) => Chat.fromMap(e)).toList();
+    try {
+      final db = await database;
+      final maps = await db.query('chats', orderBy: 'created_at DESC');
+      return maps.map((e) => Chat.fromMap(e)).toList();
+    } catch (e) {
+      return [];
+    }
   }
 
-  // Messages
   Future<void> saveMessage(String chatId, Message msg) async {
     final db = await database;
     await db.insert('messages', {
@@ -87,72 +160,52 @@ class DBService {
   }
 
   Future<List<Message>> getMessages(String chatId) async {
-    final db = await database;
-    final maps = await db.query(
-      'messages',
-      where: 'chat_id = ?',
-      whereArgs: [chatId],
-      orderBy: 'created_at ASC',
-    );
-    return maps.map((e) => Message(
-      text: e['text'] as String,
-      isUser: e['is_user'] == 1,
-    )).toList();
-  }
-
-  // Usage (for rate limits)
-  Future<int> getMessageCountToday() async {
-    final today = DateTime.now().toIso8601String().split('T')[0];
-    final db = await database;
-    final list = await db.query('usage', where: 'date = ?', whereArgs: [today]);
-    return list.isEmpty ? 0 : list[0]['message_count'] as int;
-  }
-
-  Future<void> incrementMessageCount() async {
-    final today = DateTime.now().toIso8601String().split('T')[0];
-    final db = await database;
-    final count = await getMessageCountToday();
-    if (count == 0) {
-      await db.insert('usage', {'date': today, 'message_count': 1});
-    } else {
-      await db.update('usage', {'message_count': count + 1}, where: 'date = ?', whereArgs: [today]);
+    try {
+      final db = await database;
+      final maps = await db.query(
+        'messages',
+        where: 'chat_id = ?',
+        whereArgs: [chatId],
+        orderBy: 'created_at ASC',
+      );
+      return maps.map((e) => Message(
+        text: e['text'] as String,
+        isUser: e['is_user'] == 1,
+      )).toList();
+    } catch (e) {
+      return [];
     }
   }
 
-  // Save downloaded model
-Future<void> saveDownloadedModel(AIModel model) async {
-  final db = await database;
-  await db.insert('downloaded_models', {
-    'id': model.id,
-    'name': model.name,
-    'size_mb': model.sizeMB,
-    'quant': model.quant,
-    'local_path': model.localPath,
-    'template_type': describeEnum(model.templateType),
-  });
-}
+  Future<int> getMessageCountToday() async {
+    try {
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      final db = await database;
+      final list = await db.query('usage', where: 'date = ?', whereArgs: [today]);
+      return list.isEmpty ? 0 : list[0]['message_count'] as int;
+    } catch (e) {
+      return 0;
+    }
+  }
 
-  // Load downloaded models on startup
-  Future<List<AIModel>> getDownloadedModels() async {
-    final db = await database;
-    final maps = await db.query('downloaded_models');
-    return maps.map((e) {
-      final type = TemplateType.values.firstWhere(
-        (t) => describeEnum(t) == e['template_type'] as String,
-        orElse: () => TemplateType.chatml,
-      );
-      return AIModel(
-        id: e['id'] as String,
-        name: e['name'] as String,
-        sizeMB: e['size_mb'] as int,
-        quant: e['quant'] as String,
-        isDownloaded: true,
-        localPath: e['local_path'] as String?,
-        templateType: type,
-        description: '',
-        bestFor: ''
-      );
-    }).toList();
+  Future<void> incrementMessageCount() async {
+    try {
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      final db = await database;
+      final count = await getMessageCountToday();
+      if (count == 0) {
+        await db.insert('usage', {'date': today, 'message_count': 1});
+      } else {
+        await db.update(
+          'usage',
+          {'message_count': count + 1},
+          where: 'date = ?',
+          whereArgs: [today],
+        );
+      }
+    } catch (e) {
+      // Ignore DB errors
+    }
   }
 
   static const int freeTierLimit = 10;

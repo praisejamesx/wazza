@@ -1,6 +1,9 @@
+// lib/widgets/model_picker_sheet.dart
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/services/model_downloader.dart';
+import 'package:wazza/services/db_service.dart';
+import 'package:wazza/utils/cancel_token.dart';
 
 class ModelPickerSheet extends StatelessWidget {
   final Function(AIModel) onSelect;
@@ -56,32 +59,86 @@ class _ModelTile extends StatelessWidget {
   Future<void> _downloadModel(BuildContext context, AIModel model) async {
     if (AIModel.listDownloaded(model.id)) return;
 
+    final cancelToken = CancelToken();
+    // bool isDownloading = true;
+    int progress = 0;
+    int downloaded = 0;
+    int total = 0;
+
     showDialog(
       context: context,
-      builder: (context) => const AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Downloading...'),
-            SizedBox(height: 8),
-            LinearProgressIndicator(),
-          ],
-        ),
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text('Downloading ${model.name}'),
+            content: SizedBox(
+              height: 120,
+              child: Column(
+                children: [
+                  LinearProgressIndicator(
+                    value: progress / 100,
+                    backgroundColor: Colors.grey[200],
+                    color: Colors.blue,
+                    minHeight: 8,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '$progress%',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    downloaded > 0 && total > 0
+                        ? '${(downloaded / (1024 * 1024)).toStringAsFixed(1)} MB / ${(total / (1024 * 1024)).toStringAsFixed(1)} MB'
+                        : 'Starting download...',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelToken.cancel();
+                  Navigator.pop(context);
+                },
+                child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          );
+        },
       ),
     );
 
     try {
-      final path = await ModelDownloader.downloadModel(model, (progress) {});
-      AIModel.markAsDownloaded(model, path);
-      if (context.mounted) Navigator.pop(context);
+      final path = await ModelDownloader.downloadModel(
+        model: model,
+        onProgress: (p, d, t) {
+          if (Navigator.of(context, rootNavigator: false).canPop()) {
+            // Update dialog state
+            (context as Element).markNeedsBuild();
+          }
+        },
+        cancelToken: cancelToken,
+      );
       
-      if (context.mounted){
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${model.name} ready!')));
+      AIModel.markAsDownloaded(model, path);
+      final db = DBService();
+      await db.saveDownloadedModel(AIModel.downloadedModels.last);
+      
+      if (context.mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${model.name} ready!')),
+        );
       }
     } catch (e) {
       if (context.mounted) Navigator.pop(context);
-      if (context.mounted){
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      if (context.mounted && !e.toString().contains('cancelled')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed: $e')),
+        );
       }
     }
   }

@@ -30,9 +30,8 @@ class LLMService {
 
     await _controller!.loadModel(
       modelPath: model.localPath!,
-      contextSize: 2048,          // Safe for low-end phones; adjust to 1024-4096
-      threads: 4,                 // ← FIXED: use 'threads' not 'nThreads'
-      // gpuLayers: 0,            // Uncomment & set >0 if you compiled Vulkan support
+      contextSize: 2048,
+      threads: 4,
     );
 
     _currentModel = model;
@@ -55,7 +54,6 @@ class LLMService {
     _isGenerating = true;
 
     final messages = [
-      // Optional: system prompt helps Qwen/others be more accurate & less hallucinatory
       ChatMessage(role: 'system', content: 'You are a helpful, accurate AI assistant. Stick to facts and be concise.'),
       ChatMessage(role: 'user', content: prompt),
     ];
@@ -68,8 +66,6 @@ class LLMService {
         topP: 0.95,
         topK: 40,
         maxTokens: 512,
-        // Optional extras if needed:
-        // repeatPenalty: 1.1,
       )) {
         if (!_isGenerating) break;
         yield token;
@@ -83,22 +79,25 @@ class LLMService {
 
   String _getTemplateString(TemplateType type) {
     switch (type) {
-      case TemplateType.chatml:   return 'chatml';    // Qwen, good default
-      case TemplateType.llama2:   return 'llama2';
-      case TemplateType.phi:      return 'phi';
-      case TemplateType.gemma:    return 'gemma';
-      case TemplateType.llama3:   return 'llama3';
-      // Add fallback or default if unknown
-      default: return 'chatml';
+      case TemplateType.chatml:
+        return 'chatml';
+      case TemplateType.llama2:
+        return 'llama2';
+      case TemplateType.phi:
+        return 'phi';
+      case TemplateType.gemma:
+        return 'gemma';
+      case TemplateType.llama3:
+        return 'llama3';
     }
   }
 
   void stop() {
     _isGenerating = false;
-    _controller?.stop();  // Stops ongoing generation if supported
   }
 
   Future<void> dispose() async {
+    _isGenerating = false;
     if (_controller != null) {
       await _controller!.dispose();
       _controller = null;

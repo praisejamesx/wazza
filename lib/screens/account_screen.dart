@@ -28,7 +28,7 @@ class AccountScreen extends StatelessWidget {
           _AccountTile(
             title: 'Share Wazza Models',
             subtitle: 'Send a model to a friend',
-            onTap: () =>_shareApp(context),
+            onTap: () => _shareApp(context),
           ),
         ],
       ),
@@ -78,9 +78,9 @@ class AccountScreen extends StatelessWidget {
   }
 
   void _shareApp(BuildContext context) {
-    // TODO: Implement APK or invite link sharing
+    // Basic sharing of app info
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sharing will be added soon!')),
+      const SnackBar(content: Text('Share feature coming soon!')),
     );
   }
 }

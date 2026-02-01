@@ -5,9 +5,20 @@ import 'package:wazza/services/db_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final db = DBService();
-  AIModel.downloadedModels = await db.getDownloadedModels();
-  runApp(const WazzaApp());
+  
+  try {
+    // Initialize database and load models
+    final db = DBService();
+    await db.database; // Initialize DB
+    AIModel.downloadedModels = await db.getDownloadedModels();
+    
+    runApp(const WazzaApp());
+  } catch (e) {
+    // If DB fails, start with empty models
+    debugPrint('DB init error: $e');
+    AIModel.downloadedModels = [];
+    runApp(const WazzaApp());
+  }
 }
 
 class WazzaApp extends StatelessWidget {
@@ -21,7 +32,11 @@ class WazzaApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.light,
         scaffoldBackgroundColor: Colors.white,
-        appBarTheme: const AppBarTheme(backgroundColor: Colors.white, foregroundColor: Colors.black),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
+        ),
       ),
       home: const HomeShell(),
     );

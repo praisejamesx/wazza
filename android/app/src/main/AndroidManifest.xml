@@ -5,8 +5,8 @@
 
     <application
         android:label="Wazza"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -15,26 +15,37 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
+            
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"
+                />
+            
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            
+            <!-- For sharing GGUF files from other apps -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
-                <data android:mimeType="*/*"/>
+                <data android:mimeType="application/octet-stream"/>
+            </intent-filter>
+            
+            <!-- For opening GGUF files directly -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:mimeType="application/octet-stream"/>
                 <data android:pathPattern=".*\\.gguf"/>
             </intent-filter>
         </activity>
+        
+        <!-- ✅ CRITICAL: This declares v2 embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.SEND"/>
-            <data android:mimeType="application/octet-stream"/>
-        </intent>
-    </queries>
 </manifest>

@@ -1,0 +1,13 @@
+// lib/utils/cancel_token.dart
+class CancelToken {
+  bool _cancelled = false;
+  bool get isCancelled => _cancelled;
+  
+  void cancel() {
+    _cancelled = true;
+  }
+  
+  void reset() {
+    _cancelled = false;
+  }
+}

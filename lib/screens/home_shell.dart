@@ -4,8 +4,7 @@ import 'package:wazza/screens/chat_list_screen.dart';
 import 'package:wazza/screens/models_screen.dart';
 import 'package:wazza/screens/account_screen.dart';
 import 'package:wazza/models/ai_model.dart';
-import 'package:wazza/services/share_service.dart';
-import 'dart:io';
+import 'package:wazza/screens/debug_screen.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -17,61 +16,30 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   Widget? _currentScreen;
   String _title = 'Wazza';
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _checkForSharedModel();
     _loadInitialScreen();
   }
 
   Future<void> _loadInitialScreen() async {
-    // Show welcome screen if no models downloaded
+    // Small delay to ensure everything is loaded
+    await Future.delayed(const Duration(milliseconds: 100));
+    
     if (AIModel.downloadedModels.isEmpty) {
-      setState(() => _currentScreen = const WelcomeScreen());
+      setState(() {
+        _currentScreen = const WelcomeScreen();
+        _title = 'Wazza';
+        _isLoading = false;
+      });
     } else {
-      setState(() => _currentScreen = const ChatListScreen());
-    }
-  }
-
-  Future<void> _checkForSharedModel() async {
-    final path = await ShareService.getSharedModelPath();
-    if (path != null && path.endsWith('.gguf')) {
-      _registerReceivedModel(path);
-    }
-  }
-
-  Future<void> _registerReceivedModel(String filePath) async {
-    try {
-      final fileName = filePath.split('/').last;
-      final modelName = fileName.replaceFirst('.gguf', '');
-      final templateType = AIModel.inferTemplate(modelName);
-      final fileSizeMB = (await File(filePath).length()) ~/ (1024 * 1024);
-
-      final model = AIModel(
-        id: modelName,
-        name: modelName,
-        sizeMB: fileSizeMB,
-        quant: 'Q4_K_M',
-        isDownloaded: true,
-        localPath: filePath,
-        templateType: templateType,
-        description: '',
-        bestFor: ''
-      );
-
-      AIModel.downloadedModels.add(model);
-      _loadInitialScreen(); // Refresh UI
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Model imported: $modelName')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Import failed: $e')),
-      );
+      setState(() {
+        _currentScreen = const ChatListScreen();
+        _title = 'Chats';
+        _isLoading = false;
+      });
     }
   }
 
@@ -86,56 +54,75 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-                title: Text(_title),
-                leading: Builder(builder: (context) => IconButton(
-                  icon: const Icon(Icons.menu),
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                )),
-              ),
-      drawer: Drawer(
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    const DrawerHeader(
-                      decoration: BoxDecoration(color: Colors.white),
-                      child: Text('Wazza', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.home),
-                      title: const Text('Home'),
-                      onTap: () {
-                        _loadInitialScreen();
-                        Navigator.pop(context);
-                      }
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.chat_bubble_outline),
-                      title: const Text('Chats'),
-                      onTap: () {
-                        _switchTo(const ChatListScreen(), 'Chats');
-                        Navigator.pop(context);
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.storage_outlined),
-                      title: const Text('Models'),
-                      onTap: () {
-                        _switchTo(const ModelsScreen(), 'Models');
-                        Navigator.pop(context);
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.account_circle_outlined),
-                      title: const Text('Account'),
-                      onTap: () {
-                        _switchTo(const AccountScreen(), 'Account');
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-      body: _currentScreen ?? const Center(child: CircularProgressIndicator()),
+        title: Text(_title),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
+      ),
+      drawer: _buildDrawer(context),
+      body: _isLoading 
+          ? const Center(child: CircularProgressIndicator())
+          : _currentScreen ?? const WelcomeScreen(),
+    );
+  }
+
+  Widget _buildDrawer(BuildContext context) {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const DrawerHeader(
+            decoration: BoxDecoration(color: Colors.white),
+            child: Text(
+              'Wazza',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.home),
+            title: const Text('Home'),
+            onTap: () {
+              _loadInitialScreen();
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.chat_bubble_outline),
+            title: const Text('Chats'),
+            onTap: () {
+              _switchTo(const ChatListScreen(), 'Chats');
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.storage_outlined),
+            title: const Text('Models'),
+            onTap: () {
+              _switchTo(const ModelsScreen(), 'Models');
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.account_circle_outlined),
+            title: const Text('Account'),
+            onTap: () {
+              _switchTo(const AccountScreen(), 'Account');
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.bug_report),
+            title: const Text('Debug'),
+            onTap: () {
+              _switchTo(const DebugScreen(), 'Debug');
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
     );
   }
 }
@@ -152,11 +139,19 @@ class WelcomeScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              'assets/images/logo.jpg',
+            // Placeholder for logo
+            Container(
               width: 120,
               height: 120,
-              fit: BoxFit.contain,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(60),
+              ),
+              child: const Icon(
+                Icons.smart_toy,
+                color: Colors.white,
+                size: 60,
+              ),
             ),
             const SizedBox(height: 24),
             const Text(
@@ -172,14 +167,41 @@ class WelcomeScreen extends StatelessWidget {
             const SizedBox(height: 40),
             FilledButton.tonal(
               onPressed: () {
-                final homeState = context.findAncestorStateOfType<_HomeShellState>();
-                homeState?._switchTo(const ModelsScreen(), 'Models');
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ModelsScreen(),
+                  ),
+                );
               },
               child: const Text('Download Your First Model'),
             ),
             const SizedBox(height: 16),
             TextButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => Scaffold(
+                      appBar: AppBar(title: const Text('How it works')),
+                      body: const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '• Runs AI models entirely on your device\n'
+                              '• No internet required after download\n'
+                              '• No account, no tracking\n'
+                              '• Share models directly with friends\n'
+                              '• All data stays on your phone',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
               child: const Text('How does this work?'),
             ),
           ],
