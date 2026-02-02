@@ -14,14 +14,14 @@ class ModelDownloader {
   }) async {
     final urls = {
       'tinyllama': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf?download=true',
-      // 'phi2': 'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf?download=true',
-      'phi2': 'https://raw.githubusercontent.com/flutter/website/main/examples/layout/lakes/step6/images/lake.jpg',
+      'phi2': 'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf?download=true',
+      // 'phi2': 'https://raw.githubusercontent.com/flutter/website/main/examples/layout/lakes/step6/images/lake.jpg',
     };
 
     final url = urls[model.id];
     if (url == null) throw Exception('No URL for ${model.name}');
 
-    // ✅ USE PUBLIC DOWNLOADS DIRECTORY (Persists across app reinstalls)
+    // ✅ USE PUBLIC DOWNLOADS DIRECTORY
     final downloadsDir = await getDownloadsDirectory();
     if (downloadsDir == null) throw Exception('Cannot access Downloads directory');
     
@@ -30,23 +30,22 @@ class ModelDownloader {
       await wazzaDir.create(recursive: true);
     }
     
-    final filename = '${model.id}.gguf'; // Consistent name
+    final filename = '${model.id}.gguf';
     final filePath = '${wazzaDir.path}/$filename';
     final file = File(filePath);
 
-    // ✅ FIRST: Check if file already exists in public directory
+    // ✅ Check if file already exists
     if (await file.exists()) {
       final length = await file.length();
       developer.log('[ModelDownloader] Using existing file: $filePath ($length bytes)');
       onProgress(100, length, length);
-      return filePath; // No download needed
+      return filePath;
     }
 
-    // ✅ SECOND: Check old locations and move if found
+    // ✅ Check old locations
     final oldPaths = await _findInOldLocations(model.id);
     if (oldPaths.isNotEmpty) {
       developer.log('[ModelDownloader] Found old file(s), moving to public directory');
-      // Move the first found file
       final oldFile = File(oldPaths.first);
       await oldFile.copy(filePath);
       final length = await file.length();
@@ -54,7 +53,7 @@ class ModelDownloader {
       return filePath;
     }
 
-    // ✅ THIRD: Only download if file doesn't exist anywhere
+    // ✅ DOWNLOAD WITH PROPER PROGRESS UPDATES
     final client = http.Client();
     final request = http.Request('GET', Uri.parse(url));
     final response = await client.send(request);
@@ -65,6 +64,7 @@ class ModelDownloader {
 
     final contentLength = response.contentLength ?? 0;
     int downloaded = 0;
+    int lastProgress = 0; // Track last progress to avoid too many updates
     final fileStream = file.openWrite();
 
     try {
@@ -79,16 +79,30 @@ class ModelDownloader {
         fileStream.add(chunk);
         downloaded += chunk.length;
 
-        // Show progress (with fallback for unknown size)
+        // ✅ FIXED: Calculate progress properly and throttle updates
+        int currentProgress;
         if (contentLength > 0) {
-          final progress = ((downloaded / contentLength) * 100).round();
-          onProgress(progress, downloaded, contentLength);
+          currentProgress = ((downloaded / contentLength) * 100).round();
         } else {
-          onProgress(-1, downloaded, contentLength);
+          // For unknown file size, use a dummy progress that increments slowly
+          currentProgress = (downloaded ~/ (1024 * 1024)) * 2; // ~2% per MB
+          if (currentProgress > 99) currentProgress = 99;
+        }
+
+        // ✅ Only update if progress actually changed (throttle)
+        if (currentProgress > lastProgress) {
+          lastProgress = currentProgress;
+          onProgress(currentProgress, downloaded, contentLength);
         }
       }
       
       await fileStream.close();
+      
+      // ✅ Always send 100% at the end, even if we missed it
+      if (downloaded > 0) {
+        onProgress(100, downloaded, downloaded);
+      }
+      
       return filePath;
     } catch (e) {
       await fileStream.close();
@@ -107,7 +121,7 @@ class ModelDownloader {
     final possibleOldDirs = [
       Directory('${appDir.path}/models'),
       Directory('${appDir.path}/app_flutter/models'),
-      appDir, // Root app directory
+      appDir,
     ];
 
     for (final dir in possibleOldDirs) {
@@ -117,7 +131,6 @@ class ModelDownloader {
           for (final file in files.whereType<File>()) {
             if (file.path.contains(modelId) && file.path.endsWith('.gguf')) {
               foundPaths.add(file.path);
-              developer.log('[ModelDownloader] Found old file: ${file.path}');
             }
           }
         } catch (e) {
@@ -128,18 +141,15 @@ class ModelDownloader {
     return foundPaths;
   }
 
-  // Get the public models directory path
   static Future<String> getPublicModelsDirectory() async {
     final downloadsDir = await getDownloadsDirectory();
-    if (downloadsDir != null) {
-      final wazzaDir = Directory('${downloadsDir.path}/WazzaModels');
-      if (!await wazzaDir.exists()) {
-        await wazzaDir.create(recursive: true);
-      }
-      return wazzaDir.path;
+    if (downloadsDir == null) {
+      throw Exception('Cannot access Downloads directory');
     }
-    // Fallback (shouldn't happen)
-    final dir = await getApplicationDocumentsDirectory();
-    return dir.path;
+    final wazzaDir = Directory('${downloadsDir.path}/WazzaModels');
+    if (!await wazzaDir.exists()) {
+      await wazzaDir.create(recursive: true);
+    }
+    return wazzaDir.path;
   }
 }

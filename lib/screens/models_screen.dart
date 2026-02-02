@@ -118,8 +118,8 @@ class _DownloadedModelCard extends StatelessWidget {
     if (confirmed != true) return;
 
     try {
-      // Delete from memory list
-      AIModel.downloadedModels.removeWhere((m) => m.id == model.id);
+      // CRITICAL FIX: Update BOTH memory lists
+      AIModel.markAsNotDownloaded(model.id);
       
       // Delete from DB
       await DBService().deleteDownloadedModel(model.id);
@@ -136,7 +136,7 @@ class _DownloadedModelCard extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${model.name} deleted')),
         );
-        // Call callback to refresh parent screen instead of Navigator.pushReplacement
+        // Call callback to refresh parent screen
         if (onModelDeleted != null) {
           onModelDeleted!();
         }
@@ -185,6 +185,8 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
   int _totalBytes = 0;
   CancelToken? _cancelToken;
   bool _dialogOpen = false;
+  // Store the dialog's setState function
+  void Function(void Function())? _setDialogState;
 
   @override
   void dispose() {
@@ -200,7 +202,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
   }
 
   Future<void> _downloadModel() async {
-    if (AIModel.listDownloaded(widget.model.id) || _isDownloading) return;
+    if (AIModel.listDownloaded(widget.model.id) || widget.model.isDownloaded || _isDownloading) return;
 
     _safeSetState(() {
       _isDownloading = true;
@@ -209,6 +211,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       _totalBytes = 0;
       _cancelToken = CancelToken();
       _dialogOpen = true;
+      _setDialogState = null;
     });
 
     // Show download dialog
@@ -220,6 +223,9 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            // Store the dialog's setState function
+            _setDialogState = setDialogState;
+            
             return AlertDialog(
               title: Text('Downloading ${widget.model.name}'),
               content: SizedBox(
@@ -228,28 +234,21 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      _downloadedBytes > 0 && _totalBytes > 0
-                          ? '${(_downloadedBytes / (1024 * 1024)).toStringAsFixed(2)} MB / ${(_totalBytes / (1024 * 1024)).toStringAsFixed(2)} MB'
+                      _downloadedBytes > 0
+                          ? '${(_downloadedBytes / (1024 * 1024)).toStringAsFixed(2)} MB${_totalBytes > 0 ? ' / ${(_totalBytes / (1024 * 1024)).toStringAsFixed(2)} MB' : ''}'
                           : 'Connecting to server...',
                       style: const TextStyle(fontSize: 14),
                     ),
                     const SizedBox(height: 16),
-                    if (_totalBytes > 0)
-                      LinearProgressIndicator(
-                        value: _downloadProgress / 100,
-                        backgroundColor: Colors.grey[200],
-                        color: Colors.blue,
-                        minHeight: 8,
-                      )
-                    else
-                      LinearProgressIndicator(
-                        backgroundColor: Colors.grey[200],
-                        color: Colors.blue,
-                        minHeight: 8,
-                      ),
+                    LinearProgressIndicator(
+                      value: _downloadProgress >= 0 ? (_downloadProgress / 100) : null,
+                      backgroundColor: Colors.grey[200],
+                      color: Colors.blue,
+                      minHeight: 8,
+                    ),
                     const SizedBox(height: 8),
                     Text(
-                      _totalBytes > 0 ? '$_downloadProgress%' : 'Downloading...',
+                      _downloadProgress >= 0 ? '$_downloadProgress%' : 'Downloading...',
                       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -266,6 +265,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
                     _safeSetState(() {
                       _isDownloading = false;
                       _downloadProgress = 0;
+                      _setDialogState = null;
                     });
                   },
                   child: const Text('Cancel', style: TextStyle(color: Colors.red)),
@@ -281,16 +281,17 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       final savedPath = await ModelDownloader.downloadModel(
         model: widget.model,
         onProgress: (progress, downloaded, total) {
-          // Use WidgetsBinding to safely update state
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              setState(() {
-                _downloadProgress = progress;
-                _downloadedBytes = downloaded;
-                _totalBytes = total;
-              });
-            }
+          // ✅ CRITICAL FIX: Update BOTH the card state AND dialog state
+          _safeSetState(() {
+            _downloadProgress = progress;
+            _downloadedBytes = downloaded;
+            _totalBytes = total;
           });
+          
+          // ✅ Also update the dialog's state if it exists
+          if (_setDialogState != null && mounted) {
+            _setDialogState!(() {});
+          }
         },
         cancelToken: _cancelToken!,
       );
@@ -309,6 +310,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       
       _safeSetState(() {
         _isDownloading = false;
+        _setDialogState = null;
       });
       
       if (mounted) {
@@ -319,7 +321,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
           ),
         );
         
-        // Call callback to refresh parent screen instead of Navigator.pushReplacement
+        // Call callback to refresh parent screen
         if (widget.onModelDownloaded != null) {
           widget.onModelDownloaded!();
         }
@@ -332,6 +334,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       
       _safeSetState(() {
         _isDownloading = false;
+        _setDialogState = null;
       });
       
       final errorMsg = e.toString();
@@ -354,6 +357,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       }
     } finally {
       _cancelToken = null;
+      _setDialogState = null;
     }
   }
 
@@ -380,7 +384,7 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
                   SizedBox(
                     width: 100,
                     height: 20,
-                    child: _totalBytes > 0
+                    child: _downloadProgress >= 0
                         ? LinearProgressIndicator(
                             value: _downloadProgress / 100,
                             backgroundColor: Colors.grey[200],
@@ -392,12 +396,14 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
                           ),
                   ),
                   Text(
-                    _totalBytes > 0 ? '$_downloadProgress%' : '...',
+                    _downloadProgress >= 0 ? '$_downloadProgress%' : '...',
                     style: const TextStyle(fontSize: 12),
                   ),
                 ] else
                   OutlinedButton(
-                    onPressed: AIModel.listDownloaded(widget.model.id) ? null : _downloadModel,
+                    onPressed: (AIModel.listDownloaded(widget.model.id) || widget.model.isDownloaded) 
+                      ? null 
+                      : _downloadModel,
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(
                         color: AIModel.listDownloaded(widget.model.id) ? Colors.grey : Colors.blue,

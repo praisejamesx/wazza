@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'dart:async'; // ADD THIS IMPORT FOR TimeoutException
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/widgets/input_bar.dart';
@@ -18,34 +20,99 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   AIModel? _selectedModel;
   bool _isGenerating = false;
+  bool _modelReady = false;
+  String? _modelError;
+  bool _modelLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _selectedModel = widget.initialModel ??
-        (AIModel.downloadedModels.isNotEmpty
-            ? AIModel.downloadedModels[0]
-            : null);
+    _initializeModel();
+  }
+
+  Future<void> _initializeModel() async {
+    try {
+      setState(() {
+        _modelLoading = true;
+        _modelError = null;
+        _modelReady = false;
+      });
+
+      _selectedModel = widget.initialModel ??
+          (AIModel.downloadedModels.isNotEmpty
+              ? AIModel.downloadedModels[0]
+              : null);
+
+      if (_selectedModel == null) {
+        setState(() {
+          _modelError = 'No model available. Please download one first.';
+          _modelReady = false;
+          _modelLoading = false;
+        });
+        return;
+      }
+
+      if (_selectedModel!.localPath == null || 
+          _selectedModel!.localPath!.isEmpty) {
+        setState(() {
+          _modelError = 'Model file path is missing.';
+          _modelReady = false;
+          _modelLoading = false;
+        });
+        return;
+      }
+
+      final fileExists = await File(_selectedModel!.localPath!).exists();
+      if (!fileExists) {
+        setState(() {
+          _modelError = 'Model file not found on device.';
+          _modelReady = false;
+          _modelLoading = false;
+        });
+        return;
+      }
+
+      // Try to load model with a timeout
+      final loadFuture = LLMService().loadModel(_selectedModel!);
+      final timeoutFuture = Future.delayed(const Duration(seconds: 5), () {
+        throw TimeoutException('Model loading timed out after 5 seconds');
+      });
+
+      await Future.any([loadFuture, timeoutFuture]);
+      
+      setState(() {
+        _modelReady = true;
+        _modelLoading = false;
+        _modelError = null;
+      });
+      
+    } on TimeoutException catch (_) {
+      setState(() {
+        _modelError = 'Model loading timed out. File may be corrupted or wrong format.';
+        _modelReady = false;
+        _modelLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _modelError = 'Failed to load model: ${e.toString().split('\n').first}';
+        _modelReady = false;
+        _modelLoading = false;
+      });
+    }
   }
 
   void _sendMessage() async {
-    print('[DEBUG] _sendMessage called');
-    final text = _textController.text.trim();
-    if (text.isEmpty) {
-      print('[DEBUG] Text is empty');
-      return;
-    }
-    if (_selectedModel == null) {
-      print('[DEBUG] No model selected');
+    if (!_modelReady) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No model selected')),
+        const SnackBar(content: Text('Model is not ready yet. Please wait.')),
       );
       return;
     }
-    if (_isGenerating) {
-      print('[DEBUG] Already generating');
-      return;
-    }
+
+    final text = _textController.text.trim();
+    if (text.isEmpty) return;
+    if (_selectedModel == null) return;
+    if (_isGenerating) return;
 
     setState(() {
       _messages.add(Message(text: text, isUser: true));
@@ -54,22 +121,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      print('[DEBUG] Loading model: ${_selectedModel!.name}');
-      print('[DEBUG] Model path: ${_selectedModel!.localPath}');
-      
-      await LLMService().loadModel(_selectedModel!);
-      print('[DEBUG] Model loaded successfully');
-      
       final stream = LLMService().generate(text);
-      print('[DEBUG] Generation stream obtained');
-      
       String fullResponse = '';
-      int tokenCount = 0;
 
       await for (final token in stream) {
-        tokenCount++;
-        print('[DEBUG] Token $tokenCount: ${token.length} chars');
-        
         if (!mounted) return;
         
         setState(() {
@@ -81,18 +136,12 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
       }
-      
-      print('[DEBUG] Stream completed. Total tokens: $tokenCount');
-    } catch (e, stack) {
-      print('[DEBUG] Error in _sendMessage: $e');
-      print('[DEBUG] Stack trace: $stack');
-      
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text('Error: ${e.toString().split('\n').first}')),
       );
     } finally {
-      print('[DEBUG] Setting _isGenerating = false');
       if (mounted) {
         setState(() => _isGenerating = false);
       }
@@ -109,28 +158,88 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
-      body: SafeArea( // ← WRAP ENTIRE BODY IN SafeArea
-        bottom: true, // ← CRITICAL: Protects bottom content
+      body: SafeArea(
+        bottom: true,
         child: Column(
           children: [
             Expanded(
-              child: _messages.isEmpty
+              child: _messages.isEmpty && _modelError == null
                   ? const Center(child: Text('Start a conversation'))
-                  : ListView.builder(
+                  : ListView(
                       padding: const EdgeInsets.all(16),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, index) {
-                        return MessageWidget(message: _messages[index]);
-                      },
+                      children: [
+                        if (_modelError != null)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red[50],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.red.shade200), // FIXED
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.error_outline, color: Colors.red),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(_modelError!)),
+                              ],
+                            ),
+                          ),
+                        ..._messages.map((message) => MessageWidget(message: message)),
+                      ],
                     ),
             ),
-            if (_selectedModel != null)
+            
+            // Show loading indicator
+            if (_modelLoading)
+              Container(
+                padding: const EdgeInsets.all(16),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Text('Loading model...'),
+                  ],
+                ),
+              )
+            // Show input bar when model is ready
+            else if (_modelReady && _selectedModel != null)
               InputBar(
                 controller: _textController,
                 onSend: _sendMessage,
                 selectedModel: _selectedModel!,
-                onModelSelected: (model) => setState(() => _selectedModel = model),
+                onModelSelected: (model) {
+                  setState(() {
+                    _selectedModel = model;
+                    _modelReady = false;
+                    _modelError = null;
+                  });
+                  _initializeModel();
+                },
               )
+            // Show error with retry button
+            else if (_modelError != null)
+              Container(
+                padding: const EdgeInsets.all(16),
+                color: Colors.grey[100],
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_modelError!)),
+                    TextButton(
+                      onPressed: _initializeModel,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
+            // No model available
             else
               Container(
                 padding: const EdgeInsets.all(16),

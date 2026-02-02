@@ -1,3 +1,4 @@
+// main.dart - UPDATED VERSION
 import 'package:flutter/material.dart';
 import 'package:wazza/screens/home_shell.dart';
 import 'package:wazza/models/ai_model.dart';
@@ -7,10 +8,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   try {
-    // Initialize database and load models
+    // Initialize database
     final db = DBService();
     await db.database; // Initialize DB
+    
+    // Load downloaded models from DB
     AIModel.downloadedModels = await db.getDownloadedModels();
+    
+    // ✅ CRITICAL: Sync remoteModels with downloaded state
+    AIModel.syncWithDownloadedModels(AIModel.downloadedModels);
     
     runApp(const WazzaApp());
   } catch (e) {
