@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'dart:async'; // ADD THIS IMPORT FOR TimeoutException
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/widgets/input_bar.dart';
@@ -125,13 +125,16 @@ class _ChatScreenState extends State<ChatScreen> {
       String fullResponse = '';
 
       await for (final token in stream) {
+        fullResponse += token; // ✅ APPEND tokens
+        
         if (!mounted) return;
         
         setState(() {
-          fullResponse = token;
           if (_messages.isNotEmpty && !_messages.last.isUser) {
+            // Update existing AI message
             _messages[_messages.length - 1] = Message(text: fullResponse, isUser: false);
           } else {
+            // Add new AI message
             _messages.add(Message(text: fullResponse, isUser: false));
           }
         });

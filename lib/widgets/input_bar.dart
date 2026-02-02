@@ -56,7 +56,30 @@ class _InputBarState extends State<InputBar> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // CRITICAL: Listen for text changes to rebuild the send button
+    widget.controller.addListener(_onTextChanged);
+  }
+
+  @override
+  void dispose() {
+    // Clean up the listener
+    widget.controller.removeListener(_onTextChanged);
+    super.dispose();
+  }
+
+  void _onTextChanged() {
+    // Rebuild the widget when text changes
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final hasText = widget.controller.text.trim().isNotEmpty;
+    
     return Material(
       child: Container(
         padding: EdgeInsets.only(
@@ -71,7 +94,7 @@ class _InputBarState extends State<InputBar> {
         ),
         child: Row(
           children: [
-            // Model selector - MAKE SURE THIS IS CLICKABLE
+            // Model selector
             GestureDetector(
               onTap: () => showModalBottomSheet(
                 context: context,
@@ -103,7 +126,7 @@ class _InputBarState extends State<InputBar> {
             ),
             const SizedBox(width: 8),
             
-            // Attachment button - USE IconButton FOR PROPER BEHAVIOR
+            // Attachment button
             IconButton(
               icon: const Icon(Icons.add_circle_outline, size: 20),
               onPressed: () => _showAttachmentOptions(context),
@@ -114,7 +137,7 @@ class _InputBarState extends State<InputBar> {
               ),
             ),
             
-            // Text field - ENSURE IT'S EXPANDED AND TAPPABLE
+            // Text field
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -129,19 +152,21 @@ class _InputBarState extends State<InputBar> {
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(horizontal: 8),
                   ),
-                  onSubmitted: (_) => widget.onSend(),
+                  onSubmitted: (_) {
+                    if (hasText) {
+                      widget.onSend();
+                    }
+                  },
                 ),
               ),
             ),
             
-            // Send button - FIXED WITH PROPER BUTTON BEHAVIOR
+            // Send button - NOW UPDATES WHEN TEXT CHANGES
             IconButton(
-              onPressed: widget.controller.text.trim().isEmpty ? null : widget.onSend,
+              onPressed: hasText ? widget.onSend : null,
               icon: Icon(
                 Icons.send,
-                color: widget.controller.text.trim().isEmpty 
-                    ? Colors.grey 
-                    : Colors.black,
+                color: hasText ? Colors.black : Colors.grey,
                 size: 20,
               ),
               padding: EdgeInsets.zero,

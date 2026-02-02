@@ -246,5 +246,5 @@ class DBService {
     }
   }
 
-  static const int freeTierLimit = 10;
+  static const int freeTierLimit = 40;
 }
