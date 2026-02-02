@@ -4,6 +4,7 @@ import 'package:wazza/models/ai_model.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:share_plus/share_plus.dart';
+import 'package:wazza/services/model_downloader.dart';
 
 class DebugScreen extends StatefulWidget {
   const DebugScreen({super.key});
@@ -24,15 +25,31 @@ class _DebugScreenState extends State<DebugScreen> {
     });
 
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final modelsDir = Directory('${dir.path}/models');
-
-      if (await modelsDir.exists()) {
-        final files = await modelsDir.list().toList();
-        setState(() {
-          _modelFiles = files.whereType<File>().toList();
-        });
+      // Scan PUBLIC directory first
+      final publicDir = await ModelDownloader.getPublicModelsDirectory();
+      final wazzaDir = Directory(publicDir);
+      
+      if (await wazzaDir.exists()) {
+        final files = await wazzaDir.list().toList();
+        _modelFiles.addAll(files.whereType<File>());
+        developer.log('Found ${files.length} files in public directory: $publicDir');
       }
+      
+      // Also scan old locations
+      final appDir = await getApplicationDocumentsDirectory();
+      final oldDirs = [
+        Directory('${appDir.path}/models'),
+        Directory('${appDir.path}/app_flutter/models'),
+      ];
+      
+      for (final oldDir in oldDirs) {
+        if (await oldDir.exists()) {
+          final oldFiles = await oldDir.list().toList();
+          _modelFiles.addAll(oldFiles.whereType<File>());
+        }
+      }
+      
+      setState(() {});
     } catch (e) {
       developer.log('Error scanning model files', error: e);
     } finally {

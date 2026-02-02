@@ -1,10 +1,11 @@
-// lib/screens/home_shell.dart
+// lib/screens/home_shell.dart - COMPLETE VERSION
 import 'package:flutter/material.dart';
 import 'package:wazza/screens/chat_list_screen.dart';
 import 'package:wazza/screens/models_screen.dart';
 import 'package:wazza/screens/account_screen.dart';
-import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/screens/debug_screen.dart';
+import 'package:wazza/models/ai_model.dart';
+import 'package:wazza/services/db_service.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -24,19 +25,30 @@ class _HomeShellState extends State<HomeShell> {
     _loadInitialScreen();
   }
 
+  void _goToModelsScreen() {
+    _switchTo(const ModelsScreen(), 'Models');
+  }
+
+  void _goToChatScreen() {
+    _switchTo(
+      ChatListScreen(onGoToModels: _goToModelsScreen),
+      'Chats',
+    );
+  }
+
   Future<void> _loadInitialScreen() async {
     // Small delay to ensure everything is loaded
     await Future.delayed(const Duration(milliseconds: 100));
-    
+
     if (AIModel.downloadedModels.isEmpty) {
       setState(() {
-        _currentScreen = const WelcomeScreen();
+        _currentScreen = WelcomeScreen(onGoToModels: _goToModelsScreen); // Pass callback
         _title = 'Wazza';
         _isLoading = false;
       });
     } else {
       setState(() {
-        _currentScreen = const ChatListScreen();
+        _currentScreen = ChatListScreen(onGoToModels: _goToModelsScreen); // Pass callback
         _title = 'Chats';
         _isLoading = false;
       });
@@ -63,9 +75,25 @@ class _HomeShellState extends State<HomeShell> {
         ),
       ),
       drawer: _buildDrawer(context),
-      body: _isLoading 
+      body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _currentScreen ?? const WelcomeScreen(),
+          : _currentScreen ?? _buildDefaultScreen(),
+    );
+  }
+
+  Widget _buildDefaultScreen() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('Something went wrong'),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: _loadInitialScreen,
+            child: const Text('Restart App'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -93,7 +121,7 @@ class _HomeShellState extends State<HomeShell> {
             leading: const Icon(Icons.chat_bubble_outline),
             title: const Text('Chats'),
             onTap: () {
-              _switchTo(const ChatListScreen(), 'Chats');
+              _goToChatScreen();
               Navigator.pop(context);
             },
           ),
@@ -101,7 +129,7 @@ class _HomeShellState extends State<HomeShell> {
             leading: const Icon(Icons.storage_outlined),
             title: const Text('Models'),
             onTap: () {
-              _switchTo(const ModelsScreen(), 'Models');
+              _goToModelsScreen();
               Navigator.pop(context);
             },
           ),
@@ -128,7 +156,8 @@ class _HomeShellState extends State<HomeShell> {
 }
 
 class WelcomeScreen extends StatelessWidget {
-  const WelcomeScreen({super.key});
+  final VoidCallback onGoToModels;
+  const WelcomeScreen({super.key, required this.onGoToModels});
 
   @override
   Widget build(BuildContext context) {
@@ -139,7 +168,6 @@ class WelcomeScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Placeholder for logo
             Container(
               width: 120,
               height: 120,
@@ -166,13 +194,7 @@ class WelcomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 40),
             FilledButton.tonal(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const ModelsScreen(),
-                  ),
-                );
-              },
+              onPressed: onGoToModels, // Uses the callback now
               child: const Text('Download Your First Model'),
             ),
             const SizedBox(height: 16),

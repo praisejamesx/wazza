@@ -1,12 +1,11 @@
-// lib/screens/chat_list_screen.dart
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/services/db_service.dart';
-import 'package:wazza/screens/models_screen.dart';
-import 'chat_screen.dart';
+import 'package:wazza/screens/chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
-  const ChatListScreen({super.key});
+  final VoidCallback onGoToModels; // ADD THIS: Callback to navigate to Models
+  const ChatListScreen({super.key, required this.onGoToModels}); // ADD PARAMETER
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -38,7 +37,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         final defaultModel = snapshot.data![1] as AIModel?;
 
         if (chats.isEmpty && defaultModel == null) {
-          return const WelcomeScreen();
+          return WelcomeScreen(onGoToModels: widget.onGoToModels); // USE CALLBACK
         }
 
         return ListView.builder(
@@ -65,7 +64,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
 }
 
 class WelcomeScreen extends StatelessWidget {
-  const WelcomeScreen({super.key});
+  final VoidCallback onGoToModels; // ADD THIS
+  const WelcomeScreen({super.key, required this.onGoToModels}); // ADD REQUIRED PARAMETER
 
   @override
   Widget build(BuildContext context) {
@@ -79,10 +79,8 @@ class WelcomeScreen extends StatelessWidget {
           const Text('Private AI. No internet. No tracking.', textAlign: TextAlign.center),
           const SizedBox(height: 32),
           OutlinedButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ModelsScreen()),
-            ),
+            // USE THE CALLBACK, NOT Navigator.push
+            onPressed: onGoToModels,
             child: const Text('Download a Model'),
           ),
         ],
