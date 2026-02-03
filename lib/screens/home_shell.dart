@@ -5,7 +5,6 @@ import 'package:wazza/screens/models_screen.dart';
 import 'package:wazza/screens/account_screen.dart';
 import 'package:wazza/screens/debug_screen.dart';
 import 'package:wazza/models/ai_model.dart';
-import 'package:wazza/services/db_service.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});

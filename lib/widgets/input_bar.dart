@@ -1,3 +1,4 @@
+// lib/widgets/input_bar.dart - UPDATED
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/widgets/model_picker_sheet.dart';
@@ -7,6 +8,7 @@ class InputBar extends StatefulWidget {
   final VoidCallback onSend;
   final AIModel selectedModel;
   final Function(AIModel) onModelSelected;
+  final bool isGenerating;
 
   const InputBar({
     super.key,
@@ -14,6 +16,7 @@ class InputBar extends StatefulWidget {
     required this.onSend,
     required this.selectedModel,
     required this.onModelSelected,
+    required this.isGenerating,
   });
 
   @override
@@ -58,19 +61,16 @@ class _InputBarState extends State<InputBar> {
   @override
   void initState() {
     super.initState();
-    // CRITICAL: Listen for text changes to rebuild the send button
     widget.controller.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
-    // Clean up the listener
     widget.controller.removeListener(_onTextChanged);
     super.dispose();
   }
 
   void _onTextChanged() {
-    // Rebuild the widget when text changes
     if (mounted) {
       setState(() {});
     }
@@ -79,6 +79,7 @@ class _InputBarState extends State<InputBar> {
   @override
   Widget build(BuildContext context) {
     final hasText = widget.controller.text.trim().isNotEmpty;
+    final canSend = hasText || widget.isGenerating;
     
     return Material(
       child: Container(
@@ -96,27 +97,32 @@ class _InputBarState extends State<InputBar> {
           children: [
             // Model selector
             GestureDetector(
-              onTap: () => showModalBottomSheet(
-                context: context,
-                builder: (context) => ModelPickerSheet(
-                  onSelect: widget.onModelSelected,
-                ),
-              ),
+              onTap: widget.isGenerating 
+                  ? null
+                  : () => showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (context) => ModelPickerSheet(
+                      onSelect: widget.onModelSelected,
+                    ),
+                  ),
               child: MouseRegion(
-                cursor: SystemMouseCursors.click,
+                cursor: widget.isGenerating 
+                    ? SystemMouseCursors.forbidden 
+                    : SystemMouseCursors.click,
                 child: Container(
-                  width: 32,
-                  height: 32,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(16),
+                    color: widget.isGenerating ? Colors.grey : Colors.black,
+                    borderRadius: BorderRadius.circular(18),
                   ),
                   child: Center(
                     child: Text(
                       widget.selectedModel.name.substring(0, 1).toUpperCase(),
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: 14,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -126,14 +132,20 @@ class _InputBarState extends State<InputBar> {
             ),
             const SizedBox(width: 8),
             
-            // Attachment button
+            // Attachment button (disabled during generation)
             IconButton(
-              icon: const Icon(Icons.add_circle_outline, size: 20),
-              onPressed: () => _showAttachmentOptions(context),
+              icon: Icon(
+                Icons.add_circle_outline, 
+                size: 22,
+                color: widget.isGenerating ? Colors.grey : Colors.black54,
+              ),
+              onPressed: widget.isGenerating 
+                  ? null 
+                  : () => _showAttachmentOptions(context),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(
-                minWidth: 40,
-                minHeight: 40,
+                minWidth: 44,
+                minHeight: 44,
               ),
             ),
             
@@ -143,6 +155,7 @@ class _InputBarState extends State<InputBar> {
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: TextField(
                   controller: widget.controller,
+                  enabled: !widget.isGenerating,
                   maxLines: null,
                   keyboardType: TextInputType.multiline,
                   textInputAction: TextInputAction.newline,
@@ -150,10 +163,10 @@ class _InputBarState extends State<InputBar> {
                     hintText: 'Message Wazza...',
                     border: InputBorder.none,
                     isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   ),
                   onSubmitted: (_) {
-                    if (hasText) {
+                    if (hasText && !widget.isGenerating) {
                       widget.onSend();
                     }
                   },
@@ -161,18 +174,21 @@ class _InputBarState extends State<InputBar> {
               ),
             ),
             
-            // Send button - NOW UPDATES WHEN TEXT CHANGES
-            IconButton(
-              onPressed: hasText ? widget.onSend : null,
-              icon: Icon(
-                Icons.send,
-                color: hasText ? Colors.black : Colors.grey,
-                size: 20,
-              ),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(
-                minWidth: 40,
-                minHeight: 40,
+            // Send/Stop button
+            Container(
+              margin: const EdgeInsets.only(left: 4),
+              child: ElevatedButton(
+                onPressed: canSend ? widget.onSend : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.isGenerating ? Colors.black : Colors.blue,
+                  foregroundColor: Colors.white,
+                  shape: const CircleBorder(),
+                  padding: const EdgeInsets.all(12),
+                  minimumSize: const Size(48, 48),
+                ),
+                child: widget.isGenerating
+                    ? const Icon(Icons.stop, size: 20)
+                    : const Icon(Icons.send, size: 20),
               ),
             ),
           ],

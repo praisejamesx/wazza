@@ -1,6 +1,7 @@
-// lib/services/llm_service.dart
+// lib/services/llm_service.dart - WITH CONTEXT MEMORY
 import 'dart:async';
 import 'package:wazza/models/ai_model.dart';
+import 'package:wazza/models/message.dart';
 import 'package:wazza/services/db_service.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 
@@ -8,6 +9,8 @@ class LLMService {
   AIModel? _currentModel;
   LlamaController? _controller;
   bool _isGenerating = false;
+  Completer<void>? _stopCompleter;
+  StreamSubscription<String>? _generationSubscription;
 
   static final LLMService _instance = LLMService._internal();
   factory LLMService() => _instance;
@@ -18,28 +21,36 @@ class LLMService {
       isChatModel: true,
       maxTokens: 512,
       temperature: 0.7,
-      stopSequences: ['<|im_end|>', '\n\n'],
+      topP: 0.95,
+      topK: 40,
+      stopSequences: ['<|im_end|>', '<|endoftext|>', '\n\n'],
       template: 'qwen',
     ),
     'phi2': ModelConfig(
       isChatModel: true,
-      maxTokens: 256,
+      maxTokens: 512,
       temperature: 0.7,
-      stopSequences: ['\n\n', '<|endoftext|>'],
+      topP: 0.95,
+      topK: 40,
+      stopSequences: ['<|endoftext|>', '\n\n'],
       template: 'phi',
     ),
     'gemma2b': ModelConfig(
       isChatModel: true,
       maxTokens: 512,
       temperature: 0.7,
-      stopSequences: ['<end_of_turn>', '\n\n'],
+      topP: 0.95,
+      topK: 40,
+      stopSequences: ['<end_of_turn>', '<eos>', '\n\n'],
       template: 'gemma',
     ),
     'tinyllama': ModelConfig(
-      isChatModel: false,
-      maxTokens: 100,
-      temperature: 0.3,
-      stopSequences: ['\n\n', '\nUser:', '\nuser:', 'User:', 'user:', '.', '?', '!'],
+      isChatModel: true,
+      maxTokens: 256,
+      temperature: 0.7,
+      topP: 0.95,
+      topK: 40,
+      stopSequences: ['</s>', '\n\n'],
     ),
   };
 
@@ -59,7 +70,7 @@ class LLMService {
       _controller = LlamaController();
       await _controller!.loadModel(
         modelPath: model.localPath!,
-        contextSize: 2048,
+        contextSize: 4096,
         threads: 4,
       );
 
@@ -69,15 +80,21 @@ class LLMService {
     }
   }
 
-  Stream<String> generate(String prompt) async* {
-    if (_isGenerating || _controller == null) {
-      yield "Model not loaded or currently busy.";
+  // MAIN METHOD WITH CONTEXT
+  Stream<String> generateWithContext(String prompt, List<Message> conversationHistory) async* {
+    if (_isGenerating) {
+      yield "Already generating. Please wait.";
+      return;
+    }
+    
+    if (_controller == null) {
+      yield "Model not loaded. Please load a model first.";
       return;
     }
 
     final db = DBService();
     
-    // Use the secure rate limiting method
+    // Rate limiting
     if (!await db.canSendMessage()) {
       yield "Daily free tier limit reached. Please try again tomorrow.";
       return;
@@ -85,87 +102,115 @@ class LLMService {
     
     await db.recordMessageSent();
     _isGenerating = true;
+    _stopCompleter = Completer<void>();
 
     try {
       final config = _modelConfigs[_currentModel!.id] ?? ModelConfig.defaultConfig;
       
-      if (config.isChatModel) {
-        yield* _generateChat(prompt, config);
-      } else {
-        yield* _generateCompletion(prompt, config);
-      }
+      // Build conversation with context
+      final messages = await _buildConversationWithContext(prompt, conversationHistory, config);
+      
+      yield* _generateFromMessages(messages, config);
     } catch (e) {
       yield "Generation error: $e";
     } finally {
       _isGenerating = false;
+      _stopCompleter = null;
+      _generationSubscription?.cancel();
+      _generationSubscription = null;
     }
   }
 
-  Stream<String> _generateChat(String prompt, ModelConfig config) async* {
-    final messages = [
-      ChatMessage(role: 'system', content: 'You are a helpful AI assistant.'),
-      ChatMessage(role: 'user', content: prompt),
-    ];
+  Future<List<ChatMessage>> _buildConversationWithContext(
+    String prompt, 
+    List<Message> history,
+    ModelConfig config,
+  ) async {
+    final messages = <ChatMessage>[];
+    
+    // Add system message
+    messages.add(ChatMessage(
+      role: 'system', 
+      content: 'You are a helpful, friendly AI assistant. Keep responses concise and helpful.'
+    ));
+    
+    // Add conversation history (truncated if needed)
+    final maxContextTokens = 3500; // Reserve some tokens for response
+    int currentTokens = _estimateTokens(messages.first.content);
+    
+    // Add history in reverse (newest first) until we hit token limit
+    for (int i = history.length - 1; i >= 0; i--) {
+      final message = history[i];
+      final role = message.isUser ? 'user' : 'assistant';
+      final content = message.text;
+      final tokens = _estimateTokens(content) + 10; // +10 for role prefix
+      
+      if (currentTokens + tokens > maxContextTokens) {
+        break; // Stop adding more history
+      }
+      
+      messages.insert(1, ChatMessage(role: role, content: content));
+      currentTokens += tokens;
+    }
+    
+    // Add current prompt
+    messages.add(ChatMessage(role: 'user', content: prompt));
+    
+    return messages;
+  }
 
+  Stream<String> _generateFromMessages(List<ChatMessage> messages, ModelConfig config) async* {
     int tokenCount = 0;
-    String lastFewTokens = '';
+    String fullResponse = '';
 
-    await for (final token in _controller!.generateChat(
+    final stream = _controller!.generateChat(
       messages: messages,
       template: config.template ?? _getTemplateString(_currentModel!.templateType),
       temperature: config.temperature,
-      topP: 0.95,
-      topK: 40,
+      topP: config.topP,
+      topK: config.topK,
       maxTokens: config.maxTokens,
-    )) {
-      if (!_isGenerating) break;
+    );
+
+    _generationSubscription = stream.listen((token) {
+      // We'll handle this in the async* generator
+    }, cancelOnError: true);
+
+    await for (final token in stream) {
+      // Check if stop was requested
+      if (_stopCompleter?.isCompleted ?? false) {
+        break;
+      }
 
       tokenCount++;
-      lastFewTokens = _updateLastTokens(lastFewTokens, token);
+      fullResponse += token;
       yield token;
 
-      if (_shouldStopGeneration(lastFewTokens, tokenCount, config)) {
+      // Check if we should stop based on stop sequences
+      for (final stopSeq in config.stopSequences) {
+        if (fullResponse.endsWith(stopSeq)) {
+          break;
+        }
+      }
+
+      // Check max tokens
+      if (tokenCount >= config.maxTokens) {
+        break;
+      }
+
+      // Check for natural stopping points
+      if (tokenCount > 20 && 
+          (token.contains('.') || token.contains('?') || token.contains('!')) &&
+          tokenCount >= config.maxTokens - 50) {
         break;
       }
     }
   }
 
-  Stream<String> _generateCompletion(String prompt, ModelConfig config) async* {
-    final simplePrompt = 'Question: $prompt\nAnswer:';
-    
-    int tokenCount = 0;
-    String lastFewTokens = '';
-
-    await for (final token in _controller!.generate(
-      prompt: simplePrompt,
-      temperature: config.temperature,
-      topP: 0.95,
-      topK: 40,
-      maxTokens: config.maxTokens,
-    )) {
-      if (!_isGenerating) break;
-
-      tokenCount++;
-      lastFewTokens = _updateLastTokens(lastFewTokens, token);
-      yield token;
-
-      if (_shouldStopGeneration(lastFewTokens, tokenCount, config)) {
-        break;
-      }
-    }
-  }
-
-  String _updateLastTokens(String lastTokens, String newToken) {
-    final updated = (lastTokens + newToken);
-    return updated.length > 30 ? updated.substring(updated.length - 30) : updated;
-  }
-
-  bool _shouldStopGeneration(String lastTokens, int tokenCount, ModelConfig config) {
-    for (final stopSeq in config.stopSequences) {
-      if (lastTokens.contains(stopSeq)) return true;
-    }
-    if (tokenCount >= config.maxTokens - 10) return true;
-    return false;
+  int _estimateTokens(String text) {
+    // Rough estimation: 1 token ≈ 4 characters for English
+    // This is approximate but works for limiting context
+    return (text.length / 4).ceil();
   }
 
   String _getTemplateString(TemplateType type) {
@@ -186,11 +231,15 @@ class LLMService {
   }
 
   void stop() {
-    _isGenerating = false;
+    if (_isGenerating) {
+      _stopCompleter?.complete();
+      _generationSubscription?.cancel();
+      _isGenerating = false;
+    }
   }
 
   Future<void> dispose() async {
-    _isGenerating = false;
+    stop();
     if (_controller != null) {
       await _controller!.dispose();
       _controller = null;
@@ -202,6 +251,8 @@ class ModelConfig {
   final bool isChatModel;
   final int maxTokens;
   final double temperature;
+  final double topP;
+  final int topK;
   final List<String> stopSequences;
   final String? template;
 
@@ -209,14 +260,18 @@ class ModelConfig {
     required this.isChatModel,
     required this.maxTokens,
     required this.temperature,
+    this.topP = 0.95,
+    this.topK = 40,
     required this.stopSequences,
     this.template,
   });
 
   static const ModelConfig defaultConfig = ModelConfig(
     isChatModel: true,
-    maxTokens: 256,
+    maxTokens: 512,
     temperature: 0.7,
+    topP: 0.95,
+    topK: 40,
     stopSequences: ['\n\n'],
   );
 }

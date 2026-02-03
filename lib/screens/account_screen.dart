@@ -41,7 +41,7 @@ class _AccountScreenState extends State<AccountScreen> {
         children: [
           ListTile(
             title: const Text('Subscription'),
-            subtitle: const Text('Free Plan (100 messages/day)'),
+            subtitle: const Text('Free Plan (50 messages/day)'),
             onTap: () => _showUpgradeDialog(context),
           ),
           _loading 

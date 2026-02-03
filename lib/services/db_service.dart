@@ -1,4 +1,4 @@
-// lib/services/db_service.dart - COMPLETE CLEAN VERSION
+// lib/services/db_service.dart - FINAL COMPLETE VERSION
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29,14 +29,33 @@ class DBService {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'wazza.db');
 
+    // INCREASE VERSION to trigger migration
     final db = await openDatabase(
       path,
-      version: 1,
+      version: 2, // Changed from 1 to 2 for migration
       onCreate: _createTables,
+      onUpgrade: _migrateDatabase,
     );
 
     await _ensureFirstUseTimestamp();
     return db;
+  }
+
+  // NEW: Migration for existing users
+  Future<void> _migrateDatabase(Database db, int oldVersion, int newVersion) async {
+    developer.log('[DBService] Migrating from v$oldVersion to v$newVersion');
+    
+    if (oldVersion < 2) {
+      // Add missing usage_logs table
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS usage_logs(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp INTEGER NOT NULL,
+          type TEXT NOT NULL DEFAULT 'message'
+        )
+      ''');
+      developer.log('[DBService] Added usage_logs table for existing database');
+    }
   }
 
   Future<void> _ensureFirstUseTimestamp() async {
@@ -78,6 +97,7 @@ class DBService {
       )
     ''');
 
+    // THIS TABLE WAS MISSING - NOW INCLUDED
     await db.execute('''
       CREATE TABLE IF NOT EXISTS usage_logs(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +106,7 @@ class DBService {
       )
     ''');
     
-    developer.log('[DBService] Tables created');
+    developer.log('[DBService] All tables created successfully');
   }
 
   // ==================== SECURE RATE LIMITING ====================
@@ -108,13 +128,18 @@ class DBService {
   }
 
   Future<int> _getMessagesInPeriod(int periodStartTimestamp) async {
-    final db = await database;
-    final result = await db.rawQuery('''
-      SELECT COUNT(*) as count FROM usage_logs 
-      WHERE timestamp >= ? AND type = 'message'
-    ''', [periodStartTimestamp]);
-    
-    return result.first['count'] as int;
+    try {
+      final db = await database;
+      final result = await db.rawQuery('''
+        SELECT COUNT(*) as count FROM usage_logs 
+        WHERE timestamp >= ? AND type = 'message'
+      ''', [periodStartTimestamp]);
+      
+      return Sqflite.firstIntValue(result) ?? 0;
+    } catch (e) {
+      developer.log('[DBService] Error counting messages: $e');
+      return 0;
+    }
   }
 
   Future<bool> canSendMessage() async {
@@ -155,6 +180,10 @@ class DBService {
       developer.log('[DBService] Message recorded at $timestamp');
     } catch (e) {
       developer.log('[DBService] Error recording message: $e');
+      // Create table if it doesn't exist (fallback)
+      await _createTables(_db!, 2);
+      // Retry
+      await recordMessageSent();
     }
   }
 
@@ -264,6 +293,24 @@ class DBService {
     }
   }
 
+  Future<Chat?> getChat(String chatId) async {
+    try {
+      final db = await database;
+      final maps = await db.query(
+        'chats',
+        where: 'id = ?',
+        whereArgs: [chatId],
+        limit: 1,
+      );
+      
+      if (maps.isEmpty) return null;
+      return Chat.fromMap(maps.first);
+    } catch (e) {
+      developer.log('[DBService] Error loading chat: $e');
+      return null;
+    }
+  }
+
   Future<void> updateChatTitle(String chatId, String newTitle) async {
     try {
       final db = await database;
@@ -312,8 +359,30 @@ class DBService {
         'is_user': message.isUser ? 1 : 0,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
+      developer.log('[DBService] Message saved for chat $chatId');
     } catch (e) {
       developer.log('[DBService] Error saving message: $e');
+    }
+  }
+
+  Future<void> saveMessages(String chatId, List<Message> messages) async {
+    try {
+      final db = await database;
+      final batch = db.batch();
+      
+      for (final message in messages) {
+        batch.insert('messages', {
+          'chat_id': chatId,
+          'text': message.text,
+          'is_user': message.isUser ? 1 : 0,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+      
+      await batch.commit();
+      developer.log('[DBService] ${messages.length} messages saved for chat $chatId');
+    } catch (e) {
+      developer.log('[DBService] Error saving messages: $e');
     }
   }
 
@@ -337,14 +406,24 @@ class DBService {
     }
   }
 
-  // ==================== BACKWARD COMPATIBILITY ====================
-  
-  Future<int> getMessageCountToday() async {
-    return await getMessagesUsedInCurrentPeriod();
+  // ==================== UTILITY METHODS ====================
+
+  Future<void> close() async {
+    if (_db != null) {
+      await _db!.close();
+      _db = null;
+    }
   }
 
-  Future<void> incrementMessageCount() async {
-    await recordMessageSent();
+  Future<void> clearDatabase() async {
+    try {
+      final db = await database;
+      await db.delete('chats');
+      await db.delete('messages');
+      await db.delete('usage_logs');
+      developer.log('[DBService] Database cleared');
+    } catch (e) {
+      developer.log('[DBService] Error clearing database: $e');
+    }
   }
-
 }
