@@ -13,15 +13,15 @@ class ModelDownloader {
     required CancelToken cancelToken,
   }) async {
     final urls = {
-      'tinyllama': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf?download=true',
-      'phi2': 'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf?download=true',
-      // 'phi2': 'https://raw.githubusercontent.com/flutter/website/main/examples/layout/lakes/step6/images/lake.jpg',
+      'qwen1_5_1_8b': 'https://huggingface.co/Qwen/Qwen1.5-1.8B-Chat-GGUF/resolve/main/qwen1_5-1_8b-chat-q4_k_m.gguf?download=true',
+      'phi2': 'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf',
+      'gemma1_5b': 'https://huggingface.co/mradermacher/Gemma-1.5B-GGUF/resolve/main/Gemma-1.5B.Q8_0.gguf',
+      'tinyllama': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf',
     };
-
     final url = urls[model.id];
     if (url == null) throw Exception('No URL for ${model.name}');
 
-    // ✅ USE PUBLIC DOWNLOADS DIRECTORY
+    // USE PUBLIC DOWNLOADS DIRECTORY
     final downloadsDir = await getDownloadsDirectory();
     if (downloadsDir == null) throw Exception('Cannot access Downloads directory');
     

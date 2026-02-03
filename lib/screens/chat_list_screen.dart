@@ -4,7 +4,7 @@ import 'package:wazza/services/db_service.dart';
 import 'package:wazza/screens/chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
-  final VoidCallback onGoToModels; // ADD THIS: Callback to navigate to Models
+  final VoidCallback onGoToModels;
   const ChatListScreen({super.key, required this.onGoToModels}); // ADD PARAMETER
 
   @override

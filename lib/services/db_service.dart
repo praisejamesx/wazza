@@ -1,10 +1,11 @@
-// lib/services/db_service.dart - CORRECTED VERSION
+// lib/services/db_service.dart - COMPLETE CLEAN VERSION
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wazza/models/chat.dart';
 import 'package:wazza/models/message.dart';
 import 'package:wazza/models/ai_model.dart';
-import 'dart:developer' as developer; // For better logging
+import 'dart:developer' as developer;
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -12,10 +13,14 @@ class DBService {
   DBService._internal();
 
   static Database? _db;
-  bool _tablesVerified = false;
+  
+  // === RATE LIMIT CONFIG ===
+  static const String _firstUseKey = 'first_use_timestamp';
+  static const int freeTierLimit = 50;
+  static const int periodHours = 24;
 
   Future<Database> get database async {
-    if (_db != null && _tablesVerified) return _db!;
+    if (_db != null) return _db!;
     _db = await _initDB();
     return _db!;
   }
@@ -24,46 +29,34 @@ class DBService {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'wazza.db');
 
-    // Open database. onCreate is our first line of defense.
     final db = await openDatabase(
       path,
       version: 1,
       onCreate: _createTables,
     );
 
-    // SECOND LINE OF DEFENSE: Explicitly verify tables exist
-    await _verifyTables(db);
-    _tablesVerified = true;
-
+    await _ensureFirstUseTimestamp();
     return db;
   }
 
-  Future<void> _createTables(Database db, int version) async {
-    developer.log('Creating database tables for the first time...');
-    await _executeTableCreation(db);
-  }
-
-  Future<void> _verifyTables(Database db) async {
-    try {
-      // Try a simple query on the critical table. If it fails, create it.
-      await db.rawQuery('SELECT 1 FROM downloaded_models LIMIT 1');
-      developer.log('Database table verified successfully.');
-    } catch (e) {
-      developer.log('Table missing or corrupt. Recreating...', error: e);
-      await _executeTableCreation(db);
+  Future<void> _ensureFirstUseTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey(_firstUseKey)) {
+      await prefs.setInt(_firstUseKey, DateTime.now().millisecondsSinceEpoch);
     }
   }
 
-  Future<void> _executeTableCreation(Database db) async {
+  Future<void> _createTables(Database db, int version) async {
     await db.execute('''
-      CREATE TABLE chats(
+      CREATE TABLE IF NOT EXISTS chats(
         id TEXT PRIMARY KEY,
         title TEXT,
         created_at INTEGER
       )
     ''');
+
     await db.execute('''
-      CREATE TABLE messages(
+      CREATE TABLE IF NOT EXISTS messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id TEXT,
         text TEXT,
@@ -71,15 +64,9 @@ class DBService {
         created_at INTEGER
       )
     ''');
+
     await db.execute('''
-      CREATE TABLE usage(
-        date TEXT PRIMARY KEY,
-        message_count INTEGER DEFAULT 0
-      )
-    ''');
-    // THE CRITICAL TABLE:
-    await db.execute('''
-      CREATE TABLE downloaded_models(
+      CREATE TABLE IF NOT EXISTS downloaded_models(
         id TEXT PRIMARY KEY,
         name TEXT,
         size_mb INTEGER,
@@ -90,10 +77,89 @@ class DBService {
         best_for TEXT
       )
     ''');
-    developer.log('All tables created successfully.');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS usage_logs(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        type TEXT NOT NULL DEFAULT 'message'
+      )
+    ''');
+    
+    developer.log('[DBService] Tables created');
   }
 
-  // Save downloaded model (RELIABLE VERSION)
+  // ==================== SECURE RATE LIMITING ====================
+  
+  Future<int> _getFirstUseTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_firstUseKey) ?? DateTime.now().millisecondsSinceEpoch;
+  }
+
+  int _getCurrentPeriodStart(int firstUseTimestamp) {
+    final firstUse = DateTime.fromMillisecondsSinceEpoch(firstUseTimestamp);
+    final now = DateTime.now();
+    
+    final hoursSinceFirstUse = now.difference(firstUse).inHours;
+    final periodsElapsed = hoursSinceFirstUse ~/ periodHours;
+    
+    final periodStart = firstUse.add(Duration(hours: periodsElapsed * periodHours));
+    return periodStart.millisecondsSinceEpoch;
+  }
+
+  Future<int> _getMessagesInPeriod(int periodStartTimestamp) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT COUNT(*) as count FROM usage_logs 
+      WHERE timestamp >= ? AND type = 'message'
+    ''', [periodStartTimestamp]);
+    
+    return result.first['count'] as int;
+  }
+
+  Future<bool> canSendMessage() async {
+    try {
+      final firstUseTimestamp = await _getFirstUseTimestamp();
+      final periodStart = _getCurrentPeriodStart(firstUseTimestamp);
+      final messagesInPeriod = await _getMessagesInPeriod(periodStart);
+      
+      developer.log('[DBService] Rate check: $messagesInPeriod/$freeTierLimit');
+      return messagesInPeriod < freeTierLimit;
+    } catch (e) {
+      developer.log('[DBService] Error in canSendMessage: $e');
+      return true;
+    }
+  }
+
+  Future<int> getMessagesUsedInCurrentPeriod() async {
+    try {
+      final firstUseTimestamp = await _getFirstUseTimestamp();
+      final periodStart = _getCurrentPeriodStart(firstUseTimestamp);
+      return await _getMessagesInPeriod(periodStart);
+    } catch (e) {
+      developer.log('[DBService] Error getting messages used: $e');
+      return 0;
+    }
+  }
+
+  Future<void> recordMessageSent() async {
+    try {
+      final db = await database;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      await db.insert('usage_logs', {
+        'timestamp': timestamp,
+        'type': 'message',
+      });
+      
+      developer.log('[DBService] Message recorded at $timestamp');
+    } catch (e) {
+      developer.log('[DBService] Error recording message: $e');
+    }
+  }
+
+  // ==================== MODEL MANAGEMENT ====================
+
   Future<bool> saveDownloadedModel(AIModel model) async {
     try {
       if (model.localPath == null || model.localPath!.isEmpty) {
@@ -116,47 +182,43 @@ class DBService {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
-      developer.log('Model saved to DB with ID: ${model.id}, path: ${model.localPath}');
+      developer.log('[DBService] Model saved: ${model.id}');
       return result > 0;
-    } catch (e, stack) {
-      developer.log('FAILED to save model to DB', error: e, stackTrace: stack);
+    } catch (e) {
+      developer.log('[DBService] FAILED to save model: $e');
       return false;
     }
   }
 
-  // Load downloaded models (WITH BETTER ERROR REPORTING)
   Future<List<AIModel>> getDownloadedModels() async {
     try {
       final db = await database;
       final maps = await db.query('downloaded_models');
 
-      developer.log('Loaded ${maps.length} models from database.');
-
       return maps.map((e) {
         final templateType = TemplateType.values.firstWhere(
-          (t) => t.name == e['template_type'] as String?,
+          (t) => t.name == (e['template_type'] as String? ?? 'chatml'),
           orElse: () => TemplateType.chatml,
         );
 
         return AIModel(
           id: e['id'] as String,
           name: e['name'] as String,
-          sizeMB: e['size_mb'] as int,
-          quant: e['quant'] as String,
+          sizeMB: e['size_mb'] as int? ?? 0,
+          quant: e['quant'] as String? ?? 'Q4_K_M',
           isDownloaded: true,
-          localPath: e['local_path'] as String? ?? '', // Ensure not null
+          localPath: e['local_path'] as String,
           templateType: templateType,
           description: e['description'] as String? ?? '',
           bestFor: e['best_for'] as String? ?? '',
         );
       }).toList();
-    } catch (e, stack) {
-      developer.log('ERROR loading models from DB. Returning empty list.', error: e, stackTrace: stack);
+    } catch (e) {
+      developer.log('[DBService] ERROR loading models: $e');
       return [];
     }
   }
 
-  // Delete model from DB
   Future<void> deleteDownloadedModel(String modelId) async {
     try {
       final db = await database;
@@ -165,36 +227,94 @@ class DBService {
         where: 'id = ?',
         whereArgs: [modelId],
       );
+      developer.log('[DBService] Model deleted: $modelId');
     } catch (e) {
-      // Ignore errors if table doesn't exist
+      developer.log('[DBService] Error deleting model: $e');
     }
   }
 
-  // Rest of your existing methods remain...
+  // ==================== CHAT PERSISTENCE ====================
+
   Future<void> saveChat(Chat chat) async {
-    final db = await database;
-    await db.insert('chats', chat.toMap());
+    try {
+      final db = await database;
+      await db.insert(
+        'chats',
+        chat.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      developer.log('[DBService] Chat saved: ${chat.id}');
+    } catch (e) {
+      developer.log('[DBService] Error saving chat: $e');
+    }
   }
 
   Future<List<Chat>> getChats() async {
     try {
       final db = await database;
-      final maps = await db.query('chats', orderBy: 'created_at DESC');
-      return maps.map((e) => Chat.fromMap(e)).toList();
+      final maps = await db.query(
+        'chats',
+        orderBy: 'created_at DESC',
+      );
+      
+      return maps.map(Chat.fromMap).toList();
     } catch (e) {
+      developer.log('[DBService] Error loading chats: $e');
       return [];
     }
   }
 
-  Future<void> saveMessage(String chatId, Message msg) async {
-    final db = await database;
-    await db.insert('messages', {
-      'id': DateTime.now().microsecondsSinceEpoch.toString(),
-      'chat_id': chatId,
-      'text': msg.text,
-      'is_user': msg.isUser ? 1 : 0,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-    });
+  Future<void> updateChatTitle(String chatId, String newTitle) async {
+    try {
+      final db = await database;
+      await db.update(
+        'chats',
+        {'title': newTitle},
+        where: 'id = ?',
+        whereArgs: [chatId],
+      );
+      developer.log('[DBService] Chat title updated: $chatId');
+    } catch (e) {
+      developer.log('[DBService] Error updating chat title: $e');
+    }
+  }
+
+  Future<void> deleteChat(String chatId) async {
+    try {
+      final db = await database;
+      
+      await db.delete(
+        'messages',
+        where: 'chat_id = ?',
+        whereArgs: [chatId],
+      );
+      
+      await db.delete(
+        'chats',
+        where: 'id = ?',
+        whereArgs: [chatId],
+      );
+      
+      developer.log('[DBService] Chat deleted: $chatId');
+    } catch (e) {
+      developer.log('[DBService] Error deleting chat: $e');
+    }
+  }
+
+  // ==================== MESSAGE MANAGEMENT ====================
+
+  Future<void> saveMessage(String chatId, Message message) async {
+    try {
+      final db = await database;
+      await db.insert('messages', {
+        'chat_id': chatId,
+        'text': message.text,
+        'is_user': message.isUser ? 1 : 0,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      developer.log('[DBService] Error saving message: $e');
+    }
   }
 
   Future<List<Message>> getMessages(String chatId) async {
@@ -206,45 +326,25 @@ class DBService {
         whereArgs: [chatId],
         orderBy: 'created_at ASC',
       );
+      
       return maps.map((e) => Message(
         text: e['text'] as String,
         isUser: e['is_user'] == 1,
       )).toList();
     } catch (e) {
+      developer.log('[DBService] Error loading messages: $e');
       return [];
     }
   }
 
+  // ==================== BACKWARD COMPATIBILITY ====================
+  
   Future<int> getMessageCountToday() async {
-    try {
-      final today = DateTime.now().toIso8601String().split('T')[0];
-      final db = await database;
-      final list = await db.query('usage', where: 'date = ?', whereArgs: [today]);
-      return list.isEmpty ? 0 : list[0]['message_count'] as int;
-    } catch (e) {
-      return 0;
-    }
+    return await getMessagesUsedInCurrentPeriod();
   }
 
   Future<void> incrementMessageCount() async {
-    try {
-      final today = DateTime.now().toIso8601String().split('T')[0];
-      final db = await database;
-      final count = await getMessageCountToday();
-      if (count == 0) {
-        await db.insert('usage', {'date': today, 'message_count': 1});
-      } else {
-        await db.update(
-          'usage',
-          {'message_count': count + 1},
-          where: 'date = ?',
-          whereArgs: [today],
-        );
-      }
-    } catch (e) {
-      // Ignore DB errors
-    }
+    await recordMessageSent();
   }
 
-  static const int freeTierLimit = 40;
 }

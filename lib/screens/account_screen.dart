@@ -1,8 +1,37 @@
-// lib/screens/account_screen.dart
+// lib/screens/account_screen.dart - SIMPLE WORKING VERSION
 import 'package:flutter/material.dart';
+import 'package:wazza/services/db_service.dart';
+import 'package:wazza/screens/models_screen.dart';
 
-class AccountScreen extends StatelessWidget {
+class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
+
+  @override
+  State<AccountScreen> createState() => _AccountScreenState();
+}
+
+class _AccountScreenState extends State<AccountScreen> {
+  int _usedMessages = 0;
+  final int _freeLimit = DBService.freeTierLimit;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUsage();
+  }
+
+  Future<void> _loadUsage() async {
+    setState(() => _loading = true);
+    
+    final db = DBService();
+    final used = await db.getMessagesUsedInCurrentPeriod();
+    
+    setState(() {
+      _usedMessages = used;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -10,25 +39,32 @@ class AccountScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Account')),
       body: ListView(
         children: [
-          _AccountTile(
-            title: 'Subscription',
-            subtitle: 'Free Plan',
+          ListTile(
+            title: const Text('Subscription'),
+            subtitle: const Text('Free Plan (100 messages/day)'),
             onTap: () => _showUpgradeDialog(context),
           ),
-          const _AccountTile(
-            title: 'Usage Today',
-            subtitle: '3 / 10 messages',
-          ),
+          _loading 
+            ? const ListTile(title: Text('Loading usage...'))
+            : ListTile(
+                title: const Text('Usage This Period'),
+                subtitle: Text('$_usedMessages / $_freeLimit messages'),
+              ),
           const Divider(height: 1),
-          _AccountTile(
-            title: 'Help & About',
-            subtitle: 'How Wazza works',
+          ListTile(
+            title: const Text('Help & About'),
+            subtitle: const Text('How Wazza works'),
             onTap: () => _showHelpPage(context),
           ),
-          _AccountTile(
-            title: 'Share Wazza Models',
-            subtitle: 'Send a model to a friend',
-            onTap: () => _shareApp(context),
+          ListTile(
+            title: const Text('Share Models'),
+            subtitle: const Text('Send a model to a friend'),
+            onTap: () => _navigateToModels(context),
+          ),
+          ListTile(
+            title: const Text('Upgrade Plan'),
+            subtitle: const Text('Unlock unlimited messages'),
+            onTap: () => _showPaymentNotice(context),
           ),
         ],
       ),
@@ -40,10 +76,16 @@ class AccountScreen extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Go Pro'),
-        content: const Text('Unlock unlimited messages and larger models.'),
+        content: const Text('Unlock unlimited messages and access to larger models.'),
         actions: [
-          TextButton(onPressed: Navigator.of(context).pop, child: const Text('Cancel')),
-          ElevatedButton(onPressed: () {}, child: const Text('Upgrade')),
+          TextButton(
+            onPressed: Navigator.of(context).pop, 
+            child: const Text('Cancel')
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(), 
+            child: const Text('Upgrade')
+          ),
         ],
       ),
     );
@@ -77,28 +119,24 @@ class AccountScreen extends StatelessWidget {
     );
   }
 
-  void _shareApp(BuildContext context) {
-    // Basic sharing of app info
+  void _navigateToModels(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ModelsScreen(),
+      ),
+    );
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Share feature coming soon!')),
+      const SnackBar(content: Text('Navigate to Models Screen')),
     );
   }
-}
 
-class _AccountTile extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final VoidCallback? onTap;
-
-  const _AccountTile({required this.title, this.subtitle, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      title: Text(title),
-      subtitle: subtitle != null ? Text(subtitle!) : null,
-      trailing: onTap != null ? const Icon(Icons.arrow_forward_ios, size: 16) : null,
-      onTap: onTap,
+  void _showPaymentNotice(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Payment integration coming soon!'),
+        duration: Duration(seconds: 2),
+      ),
     );
   }
 }

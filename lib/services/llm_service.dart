@@ -1,4 +1,4 @@
-// lib/services/llm_service.dart - FIXED VERSION
+// lib/services/llm_service.dart
 import 'dart:async';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/services/db_service.dart';
@@ -13,46 +13,60 @@ class LLMService {
   factory LLMService() => _instance;
   LLMService._internal();
 
-  // Configuration per model type
   static const Map<String, ModelConfig> _modelConfigs = {
-    'tinyllama': ModelConfig(
-      isChatModel: false,
-      maxTokens: 100,
-      temperature: 0.2,
-      stopSequences: ['\n\n', '\nUser:', '\nuser:', 'User:', 'user:'],
+    'qwen1_5_1_8b': ModelConfig(
+      isChatModel: true,
+      maxTokens: 512,
+      temperature: 0.7,
+      stopSequences: ['<|im_end|>', '\n\n'],
+      template: 'qwen',
     ),
     'phi2': ModelConfig(
       isChatModel: true,
-      maxTokens: 150,
+      maxTokens: 256,
       temperature: 0.7,
-      stopSequences: ['\n\n'],
+      stopSequences: ['\n\n', '<|endoftext|>'],
       template: 'phi',
     ),
-    // Add new models here
+    'gemma2b': ModelConfig(
+      isChatModel: true,
+      maxTokens: 512,
+      temperature: 0.7,
+      stopSequences: ['<end_of_turn>', '\n\n'],
+      template: 'gemma',
+    ),
+    'tinyllama': ModelConfig(
+      isChatModel: false,
+      maxTokens: 100,
+      temperature: 0.3,
+      stopSequences: ['\n\n', '\nUser:', '\nuser:', 'User:', 'user:', '.', '?', '!'],
+    ),
   };
 
   Future<void> loadModel(AIModel model) async {
-    if (_currentModel?.id == model.id && _controller != null) return;
+    try {
+      if (_currentModel?.id == model.id && _controller != null) return;
 
-    // Clean up previous controller
-    if (_controller != null) {
-      await _controller!.dispose();
-      _controller = null;
+      if (_controller != null) {
+        await _controller!.dispose();
+        _controller = null;
+      }
+
+      if (model.localPath == null || model.localPath!.isEmpty) {
+        throw Exception('Model has no valid local path');
+      }
+
+      _controller = LlamaController();
+      await _controller!.loadModel(
+        modelPath: model.localPath!,
+        contextSize: 2048,
+        threads: 4,
+      );
+
+      _currentModel = model;
+    } catch (e) {
+      rethrow;
     }
-
-    if (model.localPath == null || model.localPath!.isEmpty) {
-      throw Exception('Model has no valid local path');
-    }
-
-    _controller = LlamaController();
-
-    await _controller!.loadModel(
-      modelPath: model.localPath!,
-      contextSize: 2048,
-      threads: 4,
-    );
-
-    _currentModel = model;
   }
 
   Stream<String> generate(String prompt) async* {
@@ -62,17 +76,17 @@ class LLMService {
     }
 
     final db = DBService();
-    final count = await db.getMessageCountToday();
-    if (count >= DBService.freeTierLimit) {
+    
+    // Use the secure rate limiting method
+    if (!await db.canSendMessage()) {
       yield "Daily free tier limit reached. Please try again tomorrow.";
       return;
     }
-    await db.incrementMessageCount();
-
+    
+    await db.recordMessageSent();
     _isGenerating = true;
 
     try {
-      // ✅ FIX: Remove parentheses - it's a const, not a method
       final config = _modelConfigs[_currentModel!.id] ?? ModelConfig.defaultConfig;
       
       if (config.isChatModel) {
@@ -87,10 +101,9 @@ class LLMService {
     }
   }
 
-  // Generate using chat template (for chat-tuned models)
   Stream<String> _generateChat(String prompt, ModelConfig config) async* {
     final messages = [
-      ChatMessage(role: 'system', content: 'Answer concisely.'),
+      ChatMessage(role: 'system', content: 'You are a helpful AI assistant.'),
       ChatMessage(role: 'user', content: prompt),
     ];
 
@@ -109,19 +122,15 @@ class LLMService {
 
       tokenCount++;
       lastFewTokens = _updateLastTokens(lastFewTokens, token);
-
       yield token;
 
-      // Stop if we detect stop sequences or hit token limit
       if (_shouldStopGeneration(lastFewTokens, tokenCount, config)) {
         break;
       }
     }
   }
 
-  // Generate using completion (for base models like TinyLlama)
   Stream<String> _generateCompletion(String prompt, ModelConfig config) async* {
-    // Simple prompt format for base models
     final simplePrompt = 'Question: $prompt\nAnswer:';
     
     int tokenCount = 0;
@@ -138,36 +147,24 @@ class LLMService {
 
       tokenCount++;
       lastFewTokens = _updateLastTokens(lastFewTokens, token);
-
       yield token;
 
-      // Stop if we detect stop sequences or hit token limit
       if (_shouldStopGeneration(lastFewTokens, tokenCount, config)) {
         break;
       }
     }
   }
 
-  // Helper methods
   String _updateLastTokens(String lastTokens, String newToken) {
     final updated = (lastTokens + newToken);
-    // Keep last 30 characters for stop sequence detection
     return updated.length > 30 ? updated.substring(updated.length - 30) : updated;
   }
 
   bool _shouldStopGeneration(String lastTokens, int tokenCount, ModelConfig config) {
-    // Check stop sequences
     for (final stopSeq in config.stopSequences) {
-      if (lastTokens.contains(stopSeq)) {
-        return true;
-      }
+      if (lastTokens.contains(stopSeq)) return true;
     }
-
-    // Check token limit
-    if (tokenCount >= config.maxTokens - 10) { // Stop 10 tokens before max
-      return true;
-    }
-
+    if (tokenCount >= config.maxTokens - 10) return true;
     return false;
   }
 
@@ -183,6 +180,8 @@ class LLMService {
         return 'gemma';
       case TemplateType.llama3:
         return 'llama3';
+      case TemplateType.qwen:
+        return 'qwen';
     }
   }
 
@@ -199,13 +198,12 @@ class LLMService {
   }
 }
 
-// Configuration for each model type
 class ModelConfig {
   final bool isChatModel;
   final int maxTokens;
   final double temperature;
   final List<String> stopSequences;
-  final String? template; // Only for chat models
+  final String? template;
 
   const ModelConfig({
     required this.isChatModel,
@@ -215,11 +213,10 @@ class ModelConfig {
     this.template,
   });
 
-  // ✅ Default config for unknown models - ACCESS WITHOUT PARENTHESES
   static const ModelConfig defaultConfig = ModelConfig(
-    isChatModel: true, // Assume chat model by default
-    maxTokens: 150,
+    isChatModel: true,
+    maxTokens: 256,
     temperature: 0.7,
-    stopSequences: ['\n\n', '\nUser:', '\nuser:'],
+    stopSequences: ['\n\n'],
   );
 }
