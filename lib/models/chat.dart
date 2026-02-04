@@ -1,9 +1,9 @@
-// lib/models/chat.dart - UPDATED
+// lib/models/chat.dart
 class Chat {
   final String id;
   final String title;
   final int createdAt;
-  final int messageCount; // Add this field
+  final int messageCount;
 
   Chat({
     required this.id,
@@ -26,7 +26,7 @@ class Chat {
       id: map['id'] as String,
       title: map['title'] as String,
       createdAt: map['created_at'] as int,
-      messageCount: map['message_count'] as int? ?? 0,
+      messageCount: (map['message_count'] ?? 0) as int, // Safe casting
     );
   }
 

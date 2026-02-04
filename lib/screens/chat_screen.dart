@@ -1,4 +1,4 @@
-// lib/screens/chat_screen.dart - NO UUID VERSION
+// lib/screens/chat_screen.dart - FIXED & CLEAN
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
@@ -13,7 +13,7 @@ import 'package:wazza/services/db_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final AIModel? initialModel;
-  final Chat? existingChat; // For continuing existing chats
+  final Chat? existingChat;
   const ChatScreen({super.key, this.initialModel, this.existingChat});
 
   @override
@@ -25,17 +25,16 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final DBService _dbService = DBService();
   final Random _random = Random();
-  
+
   AIModel? _selectedModel;
   bool _isGenerating = false;
   bool _modelReady = false;
   String? _modelError;
   bool _modelLoading = false;
-  String _chatId = ''; // Will be set based on existing or new chat
+  late String _chatId;
   Chat? _currentChat;
   StreamSubscription<String>? _generationSubscription;
 
-  // Helper to generate unique ID without uuid package
   String _generateChatId() {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     return List.generate(16, (index) => chars[_random.nextInt(chars.length)]).join();
@@ -52,16 +51,15 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _generationSubscription?.cancel();
     LLMService().stop();
+    _textController.dispose();
     super.dispose();
   }
 
   Future<void> _initializeChat() async {
     if (widget.existingChat != null) {
-      // Load existing chat
       _chatId = widget.existingChat!.id;
       _currentChat = widget.existingChat;
-      
-      // Load messages from database
+
       final messages = await _dbService.getMessages(_chatId);
       if (mounted) {
         setState(() {
@@ -69,106 +67,71 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } else {
-      // Create new chat
       _chatId = _generateChatId();
       _currentChat = Chat(
         id: _chatId,
         title: 'New Chat',
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
-      
-      // Save new chat to database
+
+      // SAVE IMMEDIATELY — this fixes chat list not showing
       await _dbService.saveChat(_currentChat!);
     }
   }
 
   Future<void> _initializeModel() async {
-    try {
-      setState(() {
-        _modelLoading = true;
-        _modelError = null;
-        _modelReady = false;
-      });
+    setState(() {
+      _modelLoading = true;
+      _modelError = null;
+      _modelReady = false;
+    });
 
+    try {
       _selectedModel = widget.initialModel ??
-          (AIModel.downloadedModels.isNotEmpty
-              ? AIModel.downloadedModels[0]
-              : null);
+          (AIModel.downloadedModels.isNotEmpty ? AIModel.downloadedModels[0] : null);
 
       if (_selectedModel == null) {
-        setState(() {
-          _modelError = 'No model available. Please download one first.';
-          _modelReady = false;
-          _modelLoading = false;
-        });
-        return;
+        throw Exception('No model available');
       }
 
-      if (_selectedModel!.localPath == null || 
-          _selectedModel!.localPath!.isEmpty) {
-        setState(() {
-          _modelError = 'Model file path is missing.';
-          _modelReady = false;
-          _modelLoading = false;
-        });
-        return;
+      final file = File(_selectedModel!.localPath!);
+      if (!await file.exists()) {
+        throw Exception('Model file missing');
       }
 
-      final fileExists = await File(_selectedModel!.localPath!).exists();
-      if (!fileExists) {
+      await LLMService().loadModel(_selectedModel!);
+
+      if (mounted) {
         setState(() {
-          _modelError = 'Model file not found on device.';
-          _modelReady = false;
+          _modelReady = true;
           _modelLoading = false;
         });
-        return;
       }
-
-      // Try to load model with a timeout
-      final loadFuture = LLMService().loadModel(_selectedModel!);
-      final timeoutFuture = Future.delayed(const Duration(seconds: 5), () {
-        throw TimeoutException('Model loading timed out after 5 seconds');
-      });
-
-      await Future.any([loadFuture, timeoutFuture]);
-      
-      setState(() {
-        _modelReady = true;
-        _modelLoading = false;
-        _modelError = null;
-      });
-      
-    } on TimeoutException catch (_) {
-      setState(() {
-        _modelError = 'Model loading timed out. File may be corrupted or wrong format.';
-        _modelReady = false;
-        _modelLoading = false;
-      });
     } catch (e) {
-      setState(() {
-        _modelError = 'Failed to load model: ${e.toString().split('\n').first}';
-        _modelReady = false;
-        _modelLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _modelError = e.toString().split('\n').first;
+          _modelLoading = false;
+        });
+      }
     }
   }
 
   void _sendMessage() async {
-    if (!_modelReady) {
+    if (!_modelReady || _selectedModel == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Model is not ready yet. Please wait.')),
+        const SnackBar(content: Text('Model not ready')),
       );
-      return;
-    }
-
-    if (_isGenerating) {
-      _stopGeneration();
       return;
     }
 
     final text = _textController.text.trim();
     if (text.isEmpty) return;
-    if (_selectedModel == null) return;
+
+    if (_isGenerating) {
+      _stopGeneration();
+      return;
+    }
 
     setState(() {
       _messages.add(Message(text: text, isUser: true));
@@ -176,11 +139,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _isGenerating = true;
     });
 
-    // Save user message to database
+    // Save user message
     await _dbService.saveMessage(_chatId, Message(text: text, isUser: true));
 
-    // Update chat title if it's the first message
-    if (_messages.length == 1 && _currentChat?.title == 'New Chat') {
+    // Auto-title on first message
+    if (_messages.length == 2 && _currentChat!.title == 'New Chat') {
       final newTitle = text.length > 30 ? '${text.substring(0, 30)}...' : text;
       await _dbService.updateChatTitle(_chatId, newTitle);
       if (mounted) {
@@ -191,57 +154,55 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      // Use generateWithContext instead of generate
       final stream = LLMService().generateWithContext(text, _messages);
       String fullResponse = '';
 
-      _generationSubscription = stream.listen((token) {
-        fullResponse += token;
-        
-        if (!mounted) return;
-        
-        setState(() {
-          if (_messages.isNotEmpty && !_messages.last.isUser) {
-            // Update existing AI message
-            _messages[_messages.length - 1] = Message(text: fullResponse, isUser: false);
-          } else {
-            // Add new AI message
-            _messages.add(Message(text: fullResponse, isUser: false));
+      _generationSubscription = stream.listen(
+        (token) {
+          fullResponse += token;
+          if (mounted) {
+            setState(() {
+              if (_messages.isNotEmpty && !_messages.last.isUser) {
+                _messages.last = Message(text: fullResponse, isUser: false);
+              } else {
+                _messages.add(Message(text: fullResponse, isUser: false));
+              }
+            });
           }
-        });
-      }, onDone: () async {
-        // Save final AI response to database
-        if (fullResponse.isNotEmpty) {
-          await _dbService.saveMessage(_chatId, Message(text: fullResponse, isUser: false));
-        }
-        
-        if (mounted) {
-          setState(() => _isGenerating = false);
-        }
-      }, onError: (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: ${e.toString().split('\n').first}')),
-          );
-          setState(() => _isGenerating = false);
-        }
-      });
-
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString().split('\n').first}')),
+        },
+        onDone: () async {
+          if (fullResponse.isNotEmpty) {
+            await _dbService.saveMessage(_chatId, Message(text: fullResponse, isUser: false));
+          }
+          if (mounted) {
+            setState(() => _isGenerating = false);
+          }
+        },
+        onError: (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error: $e')),
+            );
+            setState(() => _isGenerating = false);
+          }
+        },
       );
-      setState(() => _isGenerating = false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Send error: $e')),
+        );
+        setState(() => _isGenerating = false);
+      }
     }
   }
 
   void _stopGeneration() {
     _generationSubscription?.cancel();
     LLMService().stop();
-    setState(() {
-      _isGenerating = false;
-    });
+    if (mounted) {
+      setState(() => _isGenerating = false);
+    }
   }
 
   @override
@@ -251,34 +212,27 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Text(_currentChat?.title ?? 'Chat'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          // Display messages used count
           FutureBuilder<int>(
             future: _dbService.getMessagesUsedInCurrentPeriod(),
             builder: (context, snapshot) {
               final count = snapshot.data ?? 0;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Center(
-                  child: Text(
-                    '$count/${DBService.freeTierLimit}',
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ),
+                child: Center(child: Text('$count/${DBService.freeTierLimit}')),
               );
             },
           ),
         ],
       ),
       body: SafeArea(
-        bottom: true,
         child: Column(
           children: [
             Expanded(
               child: _messages.isEmpty && _modelError == null
-                  ? const Center(child: Text('Start a conversation'))
+                  ? const Center(child: Text('Start typing...'))
                   : ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
@@ -299,33 +253,24 @@ class _ChatScreenState extends State<ChatScreen> {
                               ],
                             ),
                           ),
-                        ..._messages.map((message) => MessageWidget(message: message)),
+                        ..._messages.map((m) => MessageWidget(message: m)),
                         if (_isGenerating && _messages.isNotEmpty && _messages.last.isUser)
-                          const MessageWidget(
-                            message: Message(text: '...', isUser: false),
-                          ),
+                          const MessageWidget(message: Message(text: '...', isUser: false)),
                       ],
                     ),
             ),
-            
-            // Show loading indicator
             if (_modelLoading)
-              Container(
-                padding: const EdgeInsets.all(16),
-                child: const Row(
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
+                    SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
                     SizedBox(width: 12),
                     Text('Loading model...'),
                   ],
                 ),
               )
-            // Show input bar when model is ready
             else if (_modelReady && _selectedModel != null)
               InputBar(
                 controller: _textController,
@@ -341,7 +286,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
                 isGenerating: _isGenerating,
               )
-            // Show error with retry button
             else if (_modelError != null)
               Container(
                 padding: const EdgeInsets.all(16),
@@ -358,11 +302,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               )
-            // No model available
             else
-              Container(
-                padding: const EdgeInsets.all(16),
-                child: const Text('No model selected. Download one first.'),
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('No model selected. Download one first.'),
               ),
           ],
         ),

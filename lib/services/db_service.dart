@@ -16,7 +16,7 @@ class DBService {
   
   // === RATE LIMIT CONFIG ===
   static const String _firstUseKey = 'first_use_timestamp';
-  static const int freeTierLimit = 50;
+  static const int freeTierLimit = 500;
   static const int periodHours = 24;
 
   Future<Database> get database async {
@@ -26,19 +26,24 @@ class DBService {
   }
 
   Future<Database> _initDB() async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'wazza.db');
+    try {
+      final dbPath = await getDatabasesPath();
+      final path = join(dbPath, 'wazza.db');
 
-    // INCREASE VERSION to trigger migration
-    final db = await openDatabase(
-      path,
-      version: 2, // Changed from 1 to 2 for migration
-      onCreate: _createTables,
-      onUpgrade: _migrateDatabase,
-    );
+      final db = await openDatabase(
+        path,
+        version: 2,
+        onCreate: _createTables,
+        onUpgrade: _migrateDatabase,
+      );
 
-    await _ensureFirstUseTimestamp();
-    return db;
+      await _ensureFirstUseTimestamp();
+      developer.log('[DBService] Database initialized at $path');
+      return db;
+    } catch (e) {
+      developer.log('[DBService] Init error: $e');
+      rethrow;
+    }
   }
 
   // NEW: Migration for existing users
@@ -272,7 +277,7 @@ class DBService {
         chat.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      developer.log('[DBService] Chat saved: ${chat.id}');
+      developer.log('[DBService] Chat saved: ${chat.id} - ${chat.title}');
     } catch (e) {
       developer.log('[DBService] Error saving chat: $e');
     }
@@ -285,7 +290,7 @@ class DBService {
         'chats',
         orderBy: 'created_at DESC',
       );
-      
+      developer.log('[DBService] Loaded ${maps.length} chats from DB');
       return maps.map(Chat.fromMap).toList();
     } catch (e) {
       developer.log('[DBService] Error loading chats: $e');

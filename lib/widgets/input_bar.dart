@@ -180,7 +180,7 @@ class _InputBarState extends State<InputBar> {
               child: ElevatedButton(
                 onPressed: canSend ? widget.onSend : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: widget.isGenerating ? Colors.black : Colors.blue,
+                  backgroundColor: widget.isGenerating ? Colors.black : Colors.black,
                   foregroundColor: Colors.white,
                   shape: const CircleBorder(),
                   padding: const EdgeInsets.all(12),
