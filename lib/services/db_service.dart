@@ -431,4 +431,33 @@ class DBService {
       developer.log('[DBService] Error clearing database: $e');
     }
   }
+
+  Future<void> resetDatabaseIfNeeded() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final needsReset = prefs.getBool('needs_db_reset') ?? true;
+      
+      if (needsReset) {
+        developer.log('[DBService] Performing one-time database reset');
+        
+        // Close and delete existing database
+        await close();
+        final dbPath = await getDatabasesPath();
+        final path = join(dbPath, 'wazza.db');
+        await deleteDatabase(path);
+        
+        // Reset the database instance
+        _db = null;
+        
+        // Reinitialize
+        await database;
+        
+        // Mark as done
+        await prefs.setBool('needs_db_reset', false);
+        developer.log('[DBService] Database reset complete');
+      }
+    } catch (e) {
+      developer.log('[DBService] Error during reset: $e');
+    }
+  }
 }

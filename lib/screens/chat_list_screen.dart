@@ -1,4 +1,4 @@
-// lib/screens/chat_list_screen.dart - FIXED VERSION
+// lib/screens/chat_list_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';

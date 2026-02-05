@@ -1,4 +1,4 @@
-// lib/widgets/input_bar.dart - UPDATED
+// lib/widgets/input_bar.dart
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/widgets/model_picker_sheet.dart';

@@ -118,9 +118,15 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _sendMessage() async {
+    // If already generating, stop it
+    if (_isGenerating) {
+      _stopGeneration();
+      return;
+    }
+
     if (!_modelReady || _selectedModel == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Model not ready')),
+        const SnackBar(content: Text('Model is not ready yet. Please wait.')),
       );
       return;
     }
@@ -128,22 +134,20 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
 
-    if (_isGenerating) {
-      _stopGeneration();
-      return;
-    }
-
+    // Clear text immediately
+    _textController.clear();
+    
+    // Add user message to UI
     setState(() {
       _messages.add(Message(text: text, isUser: true));
-      _textController.clear();
       _isGenerating = true;
     });
 
-    // Save user message
+    // Save user message to database
     await _dbService.saveMessage(_chatId, Message(text: text, isUser: true));
 
-    // Auto-title on first message
-    if (_messages.length == 2 && _currentChat!.title == 'New Chat') {
+    // Update chat title if it's the first message
+    if (_messages.length == 1 && _currentChat?.title == 'New Chat') {
       final newTitle = text.length > 30 ? '${text.substring(0, 30)}...' : text;
       await _dbService.updateChatTitle(_chatId, newTitle);
       if (mounted) {
@@ -157,43 +161,44 @@ class _ChatScreenState extends State<ChatScreen> {
       final stream = LLMService().generateWithContext(text, _messages);
       String fullResponse = '';
 
-      _generationSubscription = stream.listen(
-        (token) {
-          fullResponse += token;
-          if (mounted) {
-            setState(() {
-              if (_messages.isNotEmpty && !_messages.last.isUser) {
-                _messages.last = Message(text: fullResponse, isUser: false);
-              } else {
-                _messages.add(Message(text: fullResponse, isUser: false));
-              }
-            });
+      _generationSubscription = stream.listen((token) {
+        fullResponse += token;
+        
+        if (!mounted) return;
+        
+        setState(() {
+          if (_messages.isNotEmpty && !_messages.last.isUser) {
+            // Update existing AI message
+            _messages[_messages.length - 1] = Message(text: fullResponse, isUser: false);
+          } else {
+            // Add new AI message
+            _messages.add(Message(text: fullResponse, isUser: false));
           }
-        },
-        onDone: () async {
-          if (fullResponse.isNotEmpty) {
-            await _dbService.saveMessage(_chatId, Message(text: fullResponse, isUser: false));
-          }
-          if (mounted) {
-            setState(() => _isGenerating = false);
-          }
-        },
-        onError: (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error: $e')),
-            );
-            setState(() => _isGenerating = false);
-          }
-        },
-      );
+        });
+      }, onDone: () async {
+        // Save final AI response to database
+        if (fullResponse.isNotEmpty) {
+          await _dbService.saveMessage(_chatId, Message(text: fullResponse, isUser: false));
+        }
+        
+        if (mounted) {
+          setState(() => _isGenerating = false);
+        }
+      }, onError: (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: ${e.toString().split('\n').first}')),
+          );
+          setState(() => _isGenerating = false);
+        }
+      });
+
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Send error: $e')),
-        );
-        setState(() => _isGenerating = false);
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString().split('\n').first}')),
+      );
+      setState(() => _isGenerating = false);
     }
   }
 

@@ -1,4 +1,4 @@
-// lib/services/llm_service.dart - CLEAN & STABLE (Feb 2026)
+// lib/services/llm_service.dart
 import 'dart:async';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/models/message.dart';
@@ -40,22 +40,14 @@ class LLMService {
   Stream<String> generateWithContext(String prompt, List<Message> history) async* {
     // Cooldown + generating check
     final now = DateTime.now();
-    if (_isGenerating ||
-        (_lastActionTime != null && now.difference(_lastActionTime!) < const Duration(milliseconds: 1500))) {
-      yield "Please wait a moment...";
+    if (_isGenerating) {
+      yield "Please wait for the current response to complete.";
       return;
     }
 
     if (_controller == null || _currentModel == null) {
       yield "Model not loaded.";
       return;
-    }
-
-    // Force reset if interrupted previously
-    if (_needsFullReset) {
-      await loadModel(_currentModel!);
-      _needsFullReset = false;
-      yield "Context reset — ready now.";
     }
 
     final db = DBService();
@@ -67,7 +59,6 @@ class LLMService {
     await db.recordMessageSent();
 
     _isGenerating = true;
-    _lastActionTime = now;
     String fullResponse = '';
 
     try {
@@ -90,9 +81,16 @@ class LLMService {
 
       messages.add(ChatMessage(role: 'user', content: prompt));
 
+      // Use correct template for each model
+      String template = 'chatml'; // default
+      if (_currentModel!.id.contains('phi')) template = 'phi';
+      if (_currentModel!.id.contains('gemma')) template = 'gemma';
+      if (_currentModel!.id.contains('qwen')) template = 'qwen';
+      if (_currentModel!.id.contains('tinyllama') || _currentModel!.id.contains('llama')) template = 'llama2';
+
       final stream = _controller!.generateChat(
         messages: messages,
-        template: null,  // AUTO-DETECT — fixes most formatting issues
+        template: template,
         temperature: 0.7,
         topP: 0.95,
         topK: 40,
@@ -108,15 +106,16 @@ class LLMService {
       yield "Error: $e";
     } finally {
       _isGenerating = false;
-      _lastActionTime = DateTime.now();
     }
   }
 
   void stop() {
-    if (_isGenerating && _controller != null) {
-      _controller!.stop();           // Native stop
+    if (_isGenerating) {
       _isGenerating = false;
-      _needsFullReset = true;        // Force reload next time
+      _controller?.stop();
+      // Cancel any active stream
+      // _generationSubscription?.cancel();
+      // _generationSubscription = null;
     }
   }
 

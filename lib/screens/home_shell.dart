@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:wazza/screens/chat_list_screen.dart';
 import 'package:wazza/screens/models_screen.dart';
 import 'package:wazza/screens/account_screen.dart';
-import 'package:wazza/screens/debug_screen.dart';
 import 'package:wazza/models/ai_model.dart';
 
 class HomeShell extends StatefulWidget {
@@ -140,14 +139,6 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.pop(context);
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.bug_report),
-            title: const Text('Debug'),
-            onTap: () {
-              _switchTo(const DebugScreen(), 'Debug');
-              Navigator.pop(context);
-            },
-          ),
         ],
       ),
     );
@@ -187,7 +178,7 @@ class WelcomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Private AI. Offline. No Nonsense.',
+              'Free, Offline & Private AI.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
