@@ -26,7 +26,7 @@ class Chat {
       id: map['id'] as String,
       title: map['title'] as String,
       createdAt: map['created_at'] as int,
-      messageCount: (map['message_count'] ?? 0) as int, // Safe casting
+      messageCount: map['message_count'] is int ? map['message_count'] as int : 0,
     );
   }
 

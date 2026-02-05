@@ -1,6 +1,8 @@
-// lib/services/db_service.dart - FINAL COMPLETE VERSION
+// lib/services/db_service.dart - UPDATED WITH MESSAGE_COUNT COLUMN
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wazza/models/chat.dart';
 import 'package:wazza/models/message.dart';
@@ -32,7 +34,7 @@ class DBService {
 
       final db = await openDatabase(
         path,
-        version: 2,
+        version: 4, // CHANGED FROM 3 to 4 for message_count column
         onCreate: _createTables,
         onUpgrade: _migrateDatabase,
       );
@@ -46,7 +48,6 @@ class DBService {
     }
   }
 
-  // NEW: Migration for existing users
   Future<void> _migrateDatabase(Database db, int oldVersion, int newVersion) async {
     developer.log('[DBService] Migrating from v$oldVersion to v$newVersion');
     
@@ -59,7 +60,26 @@ class DBService {
           type TEXT NOT NULL DEFAULT 'message'
         )
       ''');
-      developer.log('[DBService] Added usage_logs table for existing database');
+      developer.log('[DBService] Added usage_logs table');
+    }
+    
+    if (oldVersion < 3) {
+      // Add model discovery support
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS model_cache(
+          file_path TEXT PRIMARY KEY,
+          file_hash TEXT,
+          last_modified INTEGER,
+          discovered_at INTEGER
+        )
+      ''');
+      developer.log('[DBService] Added model_cache table for discovery');
+    }
+    
+    if (oldVersion < 4) {
+      // Add message_count column to chats table
+      await db.execute('ALTER TABLE chats ADD COLUMN message_count INTEGER DEFAULT 0');
+      developer.log('[DBService] Added message_count column to chats table');
     }
   }
 
@@ -71,11 +91,13 @@ class DBService {
   }
 
   Future<void> _createTables(Database db, int version) async {
+    // UPDATED: Added message_count column
     await db.execute('''
       CREATE TABLE IF NOT EXISTS chats(
         id TEXT PRIMARY KEY,
         title TEXT,
-        created_at INTEGER
+        created_at INTEGER,
+        message_count INTEGER DEFAULT 0
       )
     ''');
 
@@ -95,14 +117,15 @@ class DBService {
         name TEXT,
         size_mb INTEGER,
         quant TEXT,
-        local_path TEXT NOT NULL,
+        local_path TEXT NOT NULL UNIQUE,
         template_type TEXT,
         description TEXT,
-        best_for TEXT
+        best_for TEXT,
+        is_custom INTEGER DEFAULT 0,
+        discovered_at INTEGER
       )
     ''');
 
-    // THIS TABLE WAS MISSING - NOW INCLUDED
     await db.execute('''
       CREATE TABLE IF NOT EXISTS usage_logs(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,85 +134,207 @@ class DBService {
       )
     ''');
     
-    developer.log('[DBService] All tables created successfully');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS model_cache(
+        file_path TEXT PRIMARY KEY,
+        file_hash TEXT,
+        last_modified INTEGER,
+        discovered_at INTEGER
+      )
+    ''');
+    
+    developer.log('[DBService] All tables created (v$version)');
   }
 
-  // ==================== SECURE RATE LIMITING ====================
+  // ==================== MODEL RECONCILIATION ====================
   
-  Future<int> _getFirstUseTimestamp() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_firstUseKey) ?? DateTime.now().millisecondsSinceEpoch;
-  }
-
-  int _getCurrentPeriodStart(int firstUseTimestamp) {
-    final firstUse = DateTime.fromMillisecondsSinceEpoch(firstUseTimestamp);
-    final now = DateTime.now();
-    
-    final hoursSinceFirstUse = now.difference(firstUse).inHours;
-    final periodsElapsed = hoursSinceFirstUse ~/ periodHours;
-    
-    final periodStart = firstUse.add(Duration(hours: periodsElapsed * periodHours));
-    return periodStart.millisecondsSinceEpoch;
-  }
-
-  Future<int> _getMessagesInPeriod(int periodStartTimestamp) async {
+  Future<void> reconcileModels() async {
     try {
+      developer.log('[DBService] Starting model reconciliation...');
+      
       final db = await database;
-      final result = await db.rawQuery('''
-        SELECT COUNT(*) as count FROM usage_logs 
-        WHERE timestamp >= ? AND type = 'message'
-      ''', [periodStartTimestamp]);
+      final modelsDir = await _getModelsDirectory();
       
-      return Sqflite.firstIntValue(result) ?? 0;
+      // Ensure models directory exists
+      if (!await modelsDir.exists()) {
+        await modelsDir.create(recursive: true);
+        developer.log('[DBService] Created models directory');
+        return;
+      }
+      
+      // Scan for model files
+      final modelFiles = await _scanForModelFiles(modelsDir);
+      developer.log('[DBService] Found ${modelFiles.length} model files');
+      
+      // Get existing models from database
+      final existingModels = await getDownloadedModels();
+      final existingPaths = existingModels.map((m) => m.localPath).whereType<String>().toSet();
+      
+      // Add new models
+      int addedCount = 0;
+      for (final file in modelFiles) {
+        if (!existingPaths.contains(file.path)) {
+          final model = await _createModelFromFile(file);
+          if (model != null) {
+            await db.insert(
+              'downloaded_models',
+              {
+                'id': model.id,
+                'name': model.name,
+                'size_mb': model.sizeMB,
+                'quant': model.quant,
+                'local_path': model.localPath!,
+                'template_type': model.templateType.name,
+                'description': model.description,
+                'best_for': model.bestFor,
+                'is_custom': 1,
+                'discovered_at': DateTime.now().millisecondsSinceEpoch,
+              },
+              conflictAlgorithm: ConflictAlgorithm.ignore,
+            );
+            addedCount++;
+            developer.log('[DBService] Added custom model: ${model.name}');
+          }
+        }
+      }
+      
+      // Remove models that no longer exist
+      int removedCount = 0;
+      for (final model in existingModels) {
+        if (model.localPath != null) {
+          final file = File(model.localPath!);
+          if (!await file.exists()) {
+            await db.delete(
+              'downloaded_models',
+              where: 'local_path = ?',
+              whereArgs: [model.localPath],
+            );
+            removedCount++;
+            developer.log('[DBService] Removed missing model: ${model.name}');
+          }
+        }
+      }
+      
+      developer.log('[DBService] Reconciliation complete: +$addedCount, -$removedCount');
+      
+      // Update AIModel.downloadedModels
+      AIModel.downloadedModels = await getDownloadedModels();
+      AIModel.syncWithDownloadedModels(AIModel.downloadedModels);
+      
     } catch (e) {
-      developer.log('[DBService] Error counting messages: $e');
-      return 0;
+      developer.log('[DBService] Error during reconciliation: $e');
     }
   }
-
-  Future<bool> canSendMessage() async {
+  
+  Future<Directory> _getModelsDirectory() async {
+    // Use app's documents directory for models
+    final appDir = await getApplicationDocumentsDirectory();
+    return Directory(join(appDir.path, 'models'));
+  }
+  
+  Future<List<File>> _scanForModelFiles(Directory dir) async {
+    final files = <File>[];
+    
     try {
-      final firstUseTimestamp = await _getFirstUseTimestamp();
-      final periodStart = _getCurrentPeriodStart(firstUseTimestamp);
-      final messagesInPeriod = await _getMessagesInPeriod(periodStart);
+      final entities = await dir.list().toList();
       
-      developer.log('[DBService] Rate check: $messagesInPeriod/$freeTierLimit');
-      return messagesInPeriod < freeTierLimit;
+      for (final entity in entities) {
+        if (entity is File) {
+          // Look for .gguf, .bin, or other model file extensions
+          if (entity.path.endsWith('.gguf') || 
+              entity.path.endsWith('.bin') ||
+              entity.path.endsWith('.model')) {
+            files.add(entity);
+          }
+        } else if (entity is Directory) {
+          // Recursively scan subdirectories
+          files.addAll(await _scanForModelFiles(entity));
+        }
+      }
     } catch (e) {
-      developer.log('[DBService] Error in canSendMessage: $e');
-      return true;
+      developer.log('[DBService] Error scanning directory: $e');
+    }
+    
+    return files;
+  }
+  
+  Future<AIModel?> _createModelFromFile(File file) async {
+    try {
+      final stats = await file.stat();
+      final sizeMB = stats.size ~/ (1024 * 1024);
+      final fileName = basename(file.path);
+      final fileNameWithoutExt = fileName.replaceAll(RegExp(r'\.(gguf|bin|model)$'), '');
+      
+      // Try to infer model details from filename
+      final (quant, templateType) = _inferModelDetails(fileNameWithoutExt);
+      
+      return AIModel(
+        id: 'custom_${fileNameWithoutExt.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_')}',
+        name: _formatModelName(fileNameWithoutExt),
+        sizeMB: sizeMB,
+        quant: quant,
+        isDownloaded: true,
+        localPath: file.path,
+        templateType: templateType,
+        description: 'Custom model discovered in models folder',
+        bestFor: 'General chat and tasks',
+      );
+    } catch (e) {
+      developer.log('[DBService] Error creating model from file: $e');
+      return null;
     }
   }
-
-  Future<int> getMessagesUsedInCurrentPeriod() async {
-    try {
-      final firstUseTimestamp = await _getFirstUseTimestamp();
-      final periodStart = _getCurrentPeriodStart(firstUseTimestamp);
-      return await _getMessagesInPeriod(periodStart);
-    } catch (e) {
-      developer.log('[DBService] Error getting messages used: $e');
-      return 0;
+  
+  (String, TemplateType) _inferModelDetails(String fileName) {
+    String quant = 'Q4_K_M';
+    TemplateType templateType = TemplateType.chatml;
+    
+    final lowerName = fileName.toLowerCase();
+    
+    // Infer quantization
+    if (lowerName.contains('q2')) {
+      quant = 'Q2_K';
+    } else if (lowerName.contains('q3')) {
+      quant = 'Q3_K_M';
+    } else if (lowerName.contains('q4')) {
+      quant = 'Q4_K_M';
+    } else if (lowerName.contains('q5')) {
+      quant = 'Q5_K_M';
+    } else if (lowerName.contains('q6')) {
+      quant = 'Q6_K';
+    } else if (lowerName.contains('q8')) {
+      quant = 'Q8_0';
+    } else if (lowerName.contains('fp16')) {
+      quant = 'F16';
     }
+    
+    // Infer template type
+    if (lowerName.contains('llama')) {
+      if (lowerName.contains('llama3')) {
+        templateType = TemplateType.llama3;
+      } else {
+        templateType = TemplateType.llama2;
+      }
+    } else if (lowerName.contains('qwen')) {
+      templateType = TemplateType.qwen;
+    } else if (lowerName.contains('phi')) {
+      templateType = TemplateType.phi;
+    } else if (lowerName.contains('gemma')) {
+      templateType = TemplateType.gemma;
+    }
+    
+    return (quant, templateType);
   }
-
-  Future<void> recordMessageSent() async {
-    try {
-      final db = await database;
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      
-      await db.insert('usage_logs', {
-        'timestamp': timestamp,
-        'type': 'message',
-      });
-      
-      developer.log('[DBService] Message recorded at $timestamp');
-    } catch (e) {
-      developer.log('[DBService] Error recording message: $e');
-      // Create table if it doesn't exist (fallback)
-      await _createTables(_db!, 2);
-      // Retry
-      await recordMessageSent();
-    }
+  
+  String _formatModelName(String fileName) {
+    // Convert snake_case or kebab-case to Title Case
+    return fileName
+        .replaceAll(RegExp(r'[_-]'), ' ')
+        .split(' ')
+        .map((word) => word.isNotEmpty 
+            ? word[0].toUpperCase() + word.substring(1).toLowerCase()
+            : '')
+        .join(' ');
   }
 
   // ==================== MODEL MANAGEMENT ====================
@@ -212,6 +357,8 @@ class DBService {
           'template_type': model.templateType.name,
           'description': model.description,
           'best_for': model.bestFor,
+          'is_custom': 0, // 0 = downloaded through app, 1 = discovered
+          'discovered_at': DateTime.now().millisecondsSinceEpoch,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -267,6 +414,32 @@ class DBService {
     }
   }
 
+  // ==================== CRITICAL FIX: Check and Recover Models ====================
+  
+  Future<void> checkAndRecoverModels() async {
+    try {
+      developer.log('[DBService] Checking and recovering models...');
+      
+      final models = await getDownloadedModels();
+      if (models.isNotEmpty) {
+        developer.log('[DBService] Database has ${models.length} models');
+        return; // We already have models
+      }
+      
+      // No models in DB, let's scan for files
+      await reconcileModels();
+      
+      final newModels = await getDownloadedModels();
+      if (newModels.isEmpty) {
+        developer.log('[DBService] No models found after reconciliation');
+      } else {
+        developer.log('[DBService] Recovered ${newModels.length} models');
+      }
+    } catch (e) {
+      developer.log('[DBService] Error in checkAndRecoverModels: $e');
+    }
+  }
+
   // ==================== CHAT PERSISTENCE ====================
 
   Future<void> saveChat(Chat chat) async {
@@ -277,7 +450,7 @@ class DBService {
         chat.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      developer.log('[DBService] Chat saved: ${chat.id} - ${chat.title}');
+      developer.log('[DBService] Chat saved: ${chat.id} - ${chat.title} (messageCount: ${chat.messageCount})');
     } catch (e) {
       developer.log('[DBService] Error saving chat: $e');
     }
@@ -325,7 +498,7 @@ class DBService {
         where: 'id = ?',
         whereArgs: [chatId],
       );
-      developer.log('[DBService] Chat title updated: $chatId');
+      developer.log('[DBService] Chat title updated: $chatId to "$newTitle"');
     } catch (e) {
       developer.log('[DBService] Error updating chat title: $e');
     }
@@ -364,30 +537,17 @@ class DBService {
         'is_user': message.isUser ? 1 : 0,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
+      
+      // Update message count in chats table
+      await db.rawUpdate('''
+        UPDATE chats 
+        SET message_count = message_count + 1 
+        WHERE id = ?
+      ''', [chatId]);
+      
       developer.log('[DBService] Message saved for chat $chatId');
     } catch (e) {
       developer.log('[DBService] Error saving message: $e');
-    }
-  }
-
-  Future<void> saveMessages(String chatId, List<Message> messages) async {
-    try {
-      final db = await database;
-      final batch = db.batch();
-      
-      for (final message in messages) {
-        batch.insert('messages', {
-          'chat_id': chatId,
-          'text': message.text,
-          'is_user': message.isUser ? 1 : 0,
-          'created_at': DateTime.now().millisecondsSinceEpoch,
-        });
-      }
-      
-      await batch.commit();
-      developer.log('[DBService] ${messages.length} messages saved for chat $chatId');
-    } catch (e) {
-      developer.log('[DBService] Error saving messages: $e');
     }
   }
 
@@ -411,6 +571,35 @@ class DBService {
     }
   }
 
+  // ==================== RATE LIMITING (ALWAYS TRUE FOR FREE) ====================
+  
+  Future<bool> canSendMessage() async {
+    // ALWAYS return true - app is now completely free
+    return true;
+  }
+
+  Future<int> getMessagesUsedInCurrentPeriod() async {
+    // Return 0 to show no limits in UI
+    return 0;
+  }
+
+  Future<void> recordMessageSent() async {
+    // Still record for statistics, but no limits
+    try {
+      final db = await database;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      await db.insert('usage_logs', {
+        'timestamp': timestamp,
+        'type': 'message',
+      });
+      
+      developer.log('[DBService] Message recorded at $timestamp');
+    } catch (e) {
+      developer.log('[DBService] Error recording message: $e');
+    }
+  }
+
   // ==================== UTILITY METHODS ====================
 
   Future<void> close() async {
@@ -426,38 +615,30 @@ class DBService {
       await db.delete('chats');
       await db.delete('messages');
       await db.delete('usage_logs');
+      await db.delete('downloaded_models');
+      await db.delete('model_cache');
       developer.log('[DBService] Database cleared');
     } catch (e) {
       developer.log('[DBService] Error clearing database: $e');
     }
   }
-
-  Future<void> resetDatabaseIfNeeded() async {
+  
+  // ==================== DEBUG METHODS ====================
+  
+  Future<void> printDatabaseInfo() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final needsReset = prefs.getBool('needs_db_reset') ?? true;
+      final db = await database;
       
-      if (needsReset) {
-        developer.log('[DBService] Performing one-time database reset');
-        
-        // Close and delete existing database
-        await close();
-        final dbPath = await getDatabasesPath();
-        final path = join(dbPath, 'wazza.db');
-        await deleteDatabase(path);
-        
-        // Reset the database instance
-        _db = null;
-        
-        // Reinitialize
-        await database;
-        
-        // Mark as done
-        await prefs.setBool('needs_db_reset', false);
-        developer.log('[DBService] Database reset complete');
-      }
+      final chats = await db.rawQuery('SELECT COUNT(*) as count FROM chats');
+      final messages = await db.rawQuery('SELECT COUNT(*) as count FROM messages');
+      final models = await db.rawQuery('SELECT COUNT(*) as count FROM downloaded_models');
+      
+      developer.log('[DBService] Database Info:');
+      developer.log('[DBService]   Chats: ${chats.first['count']}');
+      developer.log('[DBService]   Messages: ${messages.first['count']}');
+      developer.log('[DBService]   Models: ${models.first['count']}');
     } catch (e) {
-      developer.log('[DBService] Error during reset: $e');
+      developer.log('[DBService] Error printing database info: $e');
     }
   }
 }
