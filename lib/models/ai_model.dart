@@ -1,4 +1,4 @@
-// lib/models/ai_model.dart - PRODUCTION MODEL CATALOG
+// lib/models/ai_model.dart
 enum TemplateType { chatml, llama2, phi, gemma, llama3, qwen }
 
 class AIModel {

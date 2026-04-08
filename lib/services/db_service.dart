@@ -1,4 +1,5 @@
-// lib/services/db_service.dart - UPDATED WITH MESSAGE_COUNT COLUMN
+// lib/services/db_service.dart
+
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';

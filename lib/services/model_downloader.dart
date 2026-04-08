@@ -1,9 +1,12 @@
+// lib/services/model_downloader.dart
+
 import 'dart:io';
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/utils/cancel_token.dart';
+import 'package:path/path.dart' as path;
 import 'dart:developer' as developer;
 
 class ModelDownloader {
@@ -21,20 +24,13 @@ class ModelDownloader {
     final url = urls[model.id];
     if (url == null) throw Exception('No URL for ${model.name}');
 
-    // USE PUBLIC DOWNLOADS DIRECTORY
-    final downloadsDir = await getDownloadsDirectory();
-    if (downloadsDir == null) throw Exception('Cannot access Downloads directory');
-    
-    final wazzaDir = Directory('${downloadsDir.path}/WazzaModels');
-    if (!await wazzaDir.exists()) {
-      await wazzaDir.create(recursive: true);
-    }
-    
+    // Use private app storage
+    final modelsDir = await getModelsDirectory();
     final filename = '${model.id}.gguf';
-    final filePath = '${wazzaDir.path}/$filename';
+    final filePath = path.join(modelsDir.path, filename);
     final file = File(filePath);
 
-    // ✅ Check if file already exists
+    // Check if file already exists
     if (await file.exists()) {
       final length = await file.length();
       developer.log('[ModelDownloader] Using existing file: $filePath ($length bytes)');
@@ -42,18 +38,7 @@ class ModelDownloader {
       return filePath;
     }
 
-    // ✅ Check old locations
-    final oldPaths = await _findInOldLocations(model.id);
-    if (oldPaths.isNotEmpty) {
-      developer.log('[ModelDownloader] Found old file(s), moving to public directory');
-      final oldFile = File(oldPaths.first);
-      await oldFile.copy(filePath);
-      final length = await file.length();
-      onProgress(100, length, length);
-      return filePath;
-    }
-
-    // ✅ DOWNLOAD WITH PROPER PROGRESS UPDATES
+    // Download
     final client = http.Client();
     final request = http.Request('GET', Uri.parse(url));
     final response = await client.send(request);
@@ -64,7 +49,7 @@ class ModelDownloader {
 
     final contentLength = response.contentLength ?? 0;
     int downloaded = 0;
-    int lastProgress = 0; // Track last progress to avoid too many updates
+    int lastProgress = 0;
     final fileStream = file.openWrite();
 
     try {
@@ -79,17 +64,14 @@ class ModelDownloader {
         fileStream.add(chunk);
         downloaded += chunk.length;
 
-        // ✅ FIXED: Calculate progress properly and throttle updates
         int currentProgress;
         if (contentLength > 0) {
           currentProgress = ((downloaded / contentLength) * 100).round();
         } else {
-          // For unknown file size, use a dummy progress that increments slowly
-          currentProgress = (downloaded ~/ (1024 * 1024)) * 2; // ~2% per MB
+          currentProgress = (downloaded ~/ (1024 * 1024)) * 2;
           if (currentProgress > 99) currentProgress = 99;
         }
 
-        // ✅ Only update if progress actually changed (throttle)
         if (currentProgress > lastProgress) {
           lastProgress = currentProgress;
           onProgress(currentProgress, downloaded, contentLength);
@@ -97,12 +79,9 @@ class ModelDownloader {
       }
       
       await fileStream.close();
-      
-      // ✅ Always send 100% at the end, even if we missed it
       if (downloaded > 0) {
         onProgress(100, downloaded, downloaded);
       }
-      
       return filePath;
     } catch (e) {
       await fileStream.close();
@@ -113,43 +92,17 @@ class ModelDownloader {
     }
   }
 
-  // Helper to find files in old storage locations
-  static Future<List<String>> _findInOldLocations(String modelId) async {
-    final List<String> foundPaths = [];
+  static Future<Directory> getModelsDirectory() async {
     final appDir = await getApplicationDocumentsDirectory();
-    
-    final possibleOldDirs = [
-      Directory('${appDir.path}/models'),
-      Directory('${appDir.path}/app_flutter/models'),
-      appDir,
-    ];
-
-    for (final dir in possibleOldDirs) {
-      if (await dir.exists()) {
-        try {
-          final files = await dir.list().toList();
-          for (final file in files.whereType<File>()) {
-            if (file.path.contains(modelId) && file.path.endsWith('.gguf')) {
-              foundPaths.add(file.path);
-            }
-          }
-        } catch (e) {
-          // Skip directories we can't read
-        }
-      }
+    final modelsDir = Directory(path.join(appDir.path, 'models'));
+    if (!await modelsDir.exists()) {
+      await modelsDir.create(recursive: true);
     }
-    return foundPaths;
+    return modelsDir;
   }
 
+  // Keep for any existing calls expecting a string path
   static Future<String> getPublicModelsDirectory() async {
-    final downloadsDir = await getDownloadsDirectory();
-    if (downloadsDir == null) {
-      throw Exception('Cannot access Downloads directory');
-    }
-    final wazzaDir = Directory('${downloadsDir.path}/WazzaModels');
-    if (!await wazzaDir.exists()) {
-      await wazzaDir.create(recursive: true);
-    }
-    return wazzaDir.path;
+    return (await getModelsDirectory()).path;
   }
 }

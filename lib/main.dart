@@ -1,4 +1,5 @@
-// main.dart - CLEAN VERSION
+// main.dart
+
 import 'package:flutter/material.dart';
 import 'package:wazza/screens/home_shell.dart';
 import 'package:wazza/models/ai_model.dart';

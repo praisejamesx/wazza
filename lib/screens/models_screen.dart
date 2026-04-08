@@ -1,3 +1,5 @@
+// lib/screens/models_screen.dart
+
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:wazza/models/ai_model.dart';
@@ -5,6 +7,8 @@ import 'package:wazza/services/model_downloader.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:wazza/services/db_service.dart';
 import 'package:wazza/utils/cancel_token.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as path;
 
 class ModelsScreen extends StatefulWidget {
   const ModelsScreen({super.key});
@@ -22,10 +26,78 @@ class _ModelsScreenState extends State<ModelsScreen> {
     });
   }
 
+  Future<void> _importModel() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['gguf', 'bin'],
+      allowMultiple: false,
+    );
+
+    if (result == null || result.files.single.path == null) return;
+
+    final sourcePath = result.files.single.path!;
+    final sourceFile = File(sourcePath);
+
+    if (!await sourceFile.exists()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File not found')),
+        );
+      }
+      return;
+    }
+
+    try {
+      final modelsDir = await ModelDownloader.getModelsDirectory();
+      final fileName = path.basename(sourcePath);
+      final destPath = path.join(modelsDir.path, fileName);
+      final destFile = File(destPath);
+
+      if (await destFile.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$fileName already exists in models')),
+          );
+        }
+        return;
+      }
+
+      await sourceFile.copy(destPath);
+
+      // Reconcile to detect the new model
+      await DBService().reconcileModels();
+      _refreshScreen();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$fileName imported successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Models')),
+      appBar: AppBar(
+        title: const Text('Models'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload),
+            onPressed: _importModel,
+            tooltip: 'Import model from device',
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () async {
           setState(() {});

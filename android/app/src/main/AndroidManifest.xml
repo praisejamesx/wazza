@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-    <!-- NEW: Required by llama_flutter_android plugin -->
+    <!-- Required by llama_flutter_android plugin -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
@@ -11,7 +11,7 @@
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true">
         
-        <!-- NEW: Service declaration for llama_flutter_android -->
+        <!-- Service declaration for llama_flutter_android -->
         <service
             android:name="com.write4me.llama_flutter_android.InferenceService"
             android:exported="false"
@@ -53,7 +53,18 @@
             </intent-filter>
         </activity>
         
-        <!-- ✅ CRITICAL: This declares v2 embedding -->
+        <!-- FileProvider for sharing private files -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+        
+        <!-- This declares v2 embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
