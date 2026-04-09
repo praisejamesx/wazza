@@ -59,7 +59,9 @@ open a PR. The repo is wide open.
 ### Support the Madness
 
 If Wazza is saving you money/time/privacy, buy a coffee to support the shipping of crazy updates:
+
 **[☕ Buy Me a Coffee](https://selar.com/showlove/praisejamesx)**
+
 **Or send Bitcoin: bc1qfqp6pg6fcrf4zfndd55fvjcrregkzfalt2vfj8**
 
 ---
