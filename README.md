@@ -56,7 +56,7 @@ We need **thousands of eyes and hundreds of hands**:
 
 open a PR. The repo is wide open.
 
-### Support the Madness
+### Support
 
 If Wazza is saving you money/time/privacy, buy a coffee to support the shipping of crazy updates:
 
