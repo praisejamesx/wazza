@@ -41,6 +41,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Wazza uses the microphone for voice input to chat with AI models.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Wazza uses speech recognition to convert your voice to text for chatting.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

@@ -1,4 +1,3 @@
-// lib/models/chat.dart
 class Chat {
   final String id;
   final String title;

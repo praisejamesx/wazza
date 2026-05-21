@@ -1,5 +1,3 @@
-// lib/services/model_downloader.dart
-
 import 'dart:io';
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
@@ -24,13 +22,11 @@ class ModelDownloader {
     final url = urls[model.id];
     if (url == null) throw Exception('No URL for ${model.name}');
 
-    // Use private app storage
     final modelsDir = await getModelsDirectory();
     final filename = '${model.id}.gguf';
     final filePath = path.join(modelsDir.path, filename);
     final file = File(filePath);
 
-    // Check if file already exists
     if (await file.exists()) {
       final length = await file.length();
       developer.log('[ModelDownloader] Using existing file: $filePath ($length bytes)');
@@ -38,25 +34,25 @@ class ModelDownloader {
       return filePath;
     }
 
-    // Download
     final client = http.Client();
     final request = http.Request('GET', Uri.parse(url));
     final response = await client.send(request);
-    
+
     if (response.statusCode != 200) {
       throw Exception('HTTP ${response.statusCode}: Failed to download');
     }
 
     final contentLength = response.contentLength ?? 0;
     int downloaded = 0;
-    int lastProgress = 0;
+    int lastProgress = -1;
     final fileStream = file.openWrite();
 
     try {
       await for (final chunk in response.stream) {
         if (cancelToken.isCancelled) {
+          await fileStream.flush();
+          await fileStream.close();
           client.close();
-          fileStream.close();
           if (await file.exists()) await file.delete();
           throw Exception('Download cancelled by user');
         }
@@ -68,27 +64,31 @@ class ModelDownloader {
         if (contentLength > 0) {
           currentProgress = ((downloaded / contentLength) * 100).round();
         } else {
-          currentProgress = (downloaded ~/ (1024 * 1024)) * 2;
+          final mbDownloaded = downloaded / (1024 * 1024);
+          currentProgress = (mbDownloaded / 20).round();
           if (currentProgress > 99) currentProgress = 99;
+          if (currentProgress < 0) currentProgress = 0;
         }
 
-        if (currentProgress > lastProgress) {
+        if (currentProgress != lastProgress) {
           lastProgress = currentProgress;
           onProgress(currentProgress, downloaded, contentLength);
         }
       }
-      
+
+      await fileStream.flush();
       await fileStream.close();
+      client.close();
+
       if (downloaded > 0) {
         onProgress(100, downloaded, downloaded);
       }
       return filePath;
     } catch (e) {
-      await fileStream.close();
+      await fileStream.close().catchError((_) {});
       if (await file.exists()) await file.delete();
-      rethrow;
-    } finally {
       client.close();
+      rethrow;
     }
   }
 
@@ -101,7 +101,6 @@ class ModelDownloader {
     return modelsDir;
   }
 
-  // Keep for any existing calls expecting a string path
   static Future<String> getPublicModelsDirectory() async {
     return (await getModelsDirectory()).path;
   }

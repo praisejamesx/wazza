@@ -1,14 +1,13 @@
-// lib/screens/account_screen.dart
-
 import 'package:flutter/material.dart';
-import 'package:wazza/services/db_service.dart';
-import 'package:wazza/screens/models_screen.dart';
-import 'package:wazza/config/app_config.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import 'package:wazza/services/db_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key});
+  final VoidCallback? onToggleTheme;
+  final bool isDarkMode;
+
+  const AccountScreen({super.key, this.onToggleTheme, required this.isDarkMode});
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
@@ -26,99 +25,110 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Future<void> _loadUsage() async {
     setState(() => _loading = true);
-    
     final db = DBService();
     final used = await db.getMessagesUsedInCurrentPeriod();
-    
-    setState(() {
-      _usedMessages = used;
-      _loading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _usedMessages = used;
+        _loading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDarkMode;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Account')),
       body: ListView(
         children: [
-          ListTile(
-            title: const Text('Subscription'),
-            subtitle: AppConfig.isFreeMode
-                ? const Text('Free Plan (Unlimited)')
-                : const Text('Free Plan (50 messages/day)'),
-            // Remove onTap in free mode
-            onTap: AppConfig.showUpgradeOptions ? () => _showUpgradeDialog(context) : null,
-          ),
-          _loading 
-            ? const ListTile(title: Text('Loading usage...'))
-            : ListTile(
-                title: const Text('Usage This Period'),
-                subtitle: AppConfig.isFreeMode
-                    ? Text('$_usedMessages messages sent')
-                    : Text('$_usedMessages / ${AppConfig.freeTierLimit} messages'),
+          const SizedBox(height: 16),
+          Center(
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(40),
               ),
-          const Divider(height: 1),
-          ListTile(
-            title: const Text('Help & About'),
-            subtitle: const Text('How Wazza works'),
-            onTap: () => _showHelpPage(context),
-          ),
-          ListTile(
-            title: const Text('Share Models'),
-            subtitle: const Text('Send a model to a friend'),
-            onTap: () => _navigateToModels(context),
-          ),
-          // Only show upgrade option if not in free mode
-          if (AppConfig.showUpgradeOptions) ...[
-            ListTile(
-              title: const Text('Upgrade Plan'),
-              subtitle: const Text('Unlock unlimited messages'),
-              onTap: () => _showPaymentNotice(context),
+              child: const Icon(Icons.smart_toy, color: Colors.white, size: 40),
             ),
-          ],
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Text(
+              'Wazza',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : Colors.black,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Center(
+            child: Text(
+              'Free • Offline • Private',
+              style: TextStyle(fontSize: 14, color: isDark ? Colors.grey[400] : Colors.grey),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            color: isDark ? Colors.grey[850] : null,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.inbox),
+                  title: const Text('Subscription'),
+                  subtitle: const Text('Free Plan (Unlimited)'),
+                ),
+                const Divider(height: 1),
+                _loading
+                    ? const ListTile(title: Text('Loading usage...'))
+                    : ListTile(
+                        leading: const Icon(Icons.bar_chart),
+                        title: const Text('Messages (24h)'),
+                        subtitle: Text('$_usedMessages messages sent'),
+                      ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            color: isDark ? Colors.grey[850] : null,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: Icon(
+                    isDark ? Icons.light_mode : Icons.dark_mode,
+                  ),
+                  title: Text(isDark ? 'Light Mode' : 'Dark Mode'),
+                  trailing: Switch(
+                    value: isDark,
+                    onChanged: (_) => widget.onToggleTheme?.call(),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.help_outline),
+                  title: const Text('Help & About'),
+                  subtitle: const Text('How Wazza works'),
+                  onTap: () => _showHelpPage(context),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  void _showUpgradeDialog(BuildContext context) {
-    if (AppConfig.isFreeMode) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Free & Open Source'),
-          content: const Text('Wazza is now completely free and open source! Enjoy unlimited messages.'),
-          actions: [
-            TextButton(
-              onPressed: Navigator.of(context).pop, 
-              child: const Text('Awesome!')
-            ),
-          ],
-        ),
-      );
-    } else {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Go Pro'),
-          content: const Text('Unlock unlimited messages and access to larger models.'),
-          actions: [
-            TextButton(
-              onPressed: Navigator.of(context).pop, 
-              child: const Text('Cancel')
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(), 
-              child: const Text('Upgrade')
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
   void _showHelpPage(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -129,18 +139,33 @@ class _AccountScreenState extends State<AccountScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Wazza',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  '• Runs AI models entirely on your device\n'
-                  '• No internet required after download\n'
-                  '• No account, no tracking\n'
-                  '• Share models directly with friends',
-                  style: TextStyle(fontSize: 14),
+                Text(
+                  'Free, Offline & Private AI.\n'
+                  'Version 2.0.0',
+                  style: TextStyle(fontSize: 14, color: isDark ? Colors.grey[400] : Colors.grey),
                 ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Features:',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                _buildFeatureItem(Icons.chat, 'Chat with local AI models offline'),
+                _buildFeatureItem(Icons.language, 'Web search when online'),
+                _buildFeatureItem(Icons.mic, 'Voice input support'),
+                _buildFeatureItem(Icons.volume_up, 'Text-to-speech for responses'),
+                _buildFeatureItem(Icons.image, 'Image attachment'),
+                _buildFeatureItem(Icons.dark_mode, 'Dark mode support'),
+                _buildFeatureItem(Icons.search, 'Search your chats'),
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
@@ -150,13 +175,12 @@ class _AccountScreenState extends State<AccountScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Wazza is free and open source. If it saves you money or time, '
-                  'consider buying me a coffee to fuel more crazy updates!',
+                  'Wazza is free and open source. Consider supporting development!',
                   style: TextStyle(fontSize: 14, color: Colors.grey),
                 ),
                 const SizedBox(height: 16),
-                // Donation buttons
                 Card(
+                  color: isDark ? Colors.grey[850] : null,
                   child: Column(
                     children: [
                       ListTile(
@@ -164,10 +188,7 @@ class _AccountScreenState extends State<AccountScreen> {
                         title: const Text('Buy Me a Coffee'),
                         subtitle: const Text('Support via Selar'),
                         trailing: const Icon(Icons.open_in_new, size: 18),
-                        onTap: () => _launchURL(
-                          context,
-                          'https://selar.com/showlove/praisejamesx',
-                        ),
+                        onTap: () => _launchURL(context, 'https://selar.com/showlove/praisejamesx'),
                       ),
                       const Divider(height: 1),
                       ListTile(
@@ -187,18 +208,6 @@ class _AccountScreenState extends State<AccountScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                const Text(
-                  'About',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Version 1.0.0',
-                  style: TextStyle(fontSize: 14, color: Colors.grey),
-                ),
               ],
             ),
           ),
@@ -207,23 +216,15 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  void _navigateToModels(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ModelsScreen(),
-      ),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Click the share icon beside a downloaded model to share it!')),
-    );
-  }
-
-  void _showPaymentNotice(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Payment integration coming soon!'),
-        duration: Duration(seconds: 2),
+  Widget _buildFeatureItem(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          const SizedBox(width: 12),
+          Text(text, style: const TextStyle(fontSize: 14)),
+        ],
       ),
     );
   }
@@ -231,8 +232,6 @@ class _AccountScreenState extends State<AccountScreen> {
   void _launchURL(BuildContext context, String url) async {
     final Uri uri = Uri.parse(url);
     try {
-      // Use url_launcher if you have it; otherwise, fallback to platform channel
-      // For now, show a snackbar with the link (users can copy manually)
       if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
         _showFallbackLink(context, url);
       }

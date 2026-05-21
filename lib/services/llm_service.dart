@@ -1,16 +1,14 @@
-// lib/services/llm_service.dart
 import 'dart:async';
 import 'package:wazza/models/ai_model.dart';
 import 'package:wazza/models/message.dart';
 import 'package:wazza/services/db_service.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
+import 'package:http/http.dart' as http;
 
 class LLMService {
   AIModel? _currentModel;
   LlamaController? _controller;
   bool _isGenerating = false;
-  bool _needsFullReset = false;
-  DateTime? _lastActionTime;
 
   static final LLMService _instance = LLMService._internal();
   factory LLMService() => _instance;
@@ -34,12 +32,56 @@ class LLMService {
     );
 
     _currentModel = model;
-    _needsFullReset = false;
   }
 
-  Stream<String> generateWithContext(String prompt, List<Message> history) async* {
-    // Cooldown + generating check
-    final now = DateTime.now();
+  Future<String> _searchWeb(String query) async {
+    try {
+      final url = Uri.parse('https://lite.duckduckgo.com/lite/').replace(queryParameters: {'q': query});
+      final response = await http.get(url, headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36',
+      });
+      if (response.statusCode == 200) {
+        final body = response.body;
+        final results = <String>[];
+        final linkRegex = RegExp(r'class="result-link">\s*<a[^>]*href="([^"]*)"[^>]*>([^<]*)<');
+
+        for (final match in linkRegex.allMatches(body)) {
+          final title = match.group(2)?.trim();
+          final link = match.group(1)?.trim();
+          if (title != null && link != null && title.isNotEmpty) {
+            results.add('• [$title]($link)');
+            if (results.length >= 5) break;
+          }
+        }
+
+        if (results.isEmpty) {
+          final snippetRegex = RegExp(r'class="result-snippet">([^<]*)<');
+          for (final match in snippetRegex.allMatches(body)) {
+            final snippet = match.group(1)?.trim();
+            if (snippet != null && snippet.isNotEmpty) {
+              results.add('• $snippet');
+              if (results.length >= 5) break;
+            }
+          }
+        }
+
+        if (results.isNotEmpty) {
+          return results.join('\n');
+        }
+      }
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  Stream<String> generateWithContext(
+    String prompt,
+    List<Message> history, {
+    bool useSearch = false,
+    String? systemPromptOverride,
+    String? imagePath,
+  }) async* {
     if (_isGenerating) {
       yield "Please wait for the current response to complete.";
       return;
@@ -59,18 +101,31 @@ class LLMService {
     await db.recordMessageSent();
 
     _isGenerating = true;
-    String fullResponse = '';
 
     try {
-      // Build messages with recent history only
+      final systemPrompt = systemPromptOverride ?? await db.getDefaultSystemPrompt();
       final messages = <ChatMessage>[
         ChatMessage(
           role: 'system',
-          content: 'You are a helpful, accurate assistant. Be concise and factual.',
+          content: systemPrompt,
         ),
       ];
 
-      // Last 8 messages for context
+      String? webContext;
+      if (useSearch) {
+        yield '_SEARCHING_';
+        webContext = await _searchWeb(prompt);
+        if (webContext.isNotEmpty) {
+          messages.add(ChatMessage(
+            role: 'system',
+            content: 'Here are relevant web search results for the user\'s query:\n$webContext\n\nUse these results if relevant to answer the user\'s question.',
+          ));
+          yield '_SEARCH_DONE_';
+        } else {
+          yield '_SEARCH_FAILED_';
+        }
+      }
+
       final recent = history.length > 8 ? history.sublist(history.length - 8) : history;
       for (final msg in recent) {
         messages.add(ChatMessage(
@@ -81,8 +136,7 @@ class LLMService {
 
       messages.add(ChatMessage(role: 'user', content: prompt));
 
-      // Use correct template for each model
-      String template = 'chatml'; // default
+      String template = 'chatml';
       if (_currentModel!.id.contains('phi')) template = 'phi';
       if (_currentModel!.id.contains('gemma')) template = 'gemma';
       if (_currentModel!.id.contains('qwen')) template = 'qwen';
@@ -99,7 +153,6 @@ class LLMService {
 
       await for (final token in stream) {
         if (!_isGenerating) break;
-        fullResponse += token;
         yield token;
       }
     } catch (e) {
@@ -109,13 +162,12 @@ class LLMService {
     }
   }
 
+
+
   void stop() {
     if (_isGenerating) {
       _isGenerating = false;
       _controller?.stop();
-      // Cancel any active stream
-      // _generationSubscription?.cancel();
-      // _generationSubscription = null;
     }
   }
 

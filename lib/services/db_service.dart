@@ -563,8 +563,10 @@ class DBService {
       );
       
       return maps.map((e) => Message(
+        id: e['id'] as int? ?? 0,
         text: e['text'] as String,
         isUser: e['is_user'] == 1,
+        timestamp: e['created_at'] as int? ?? 0,
       )).toList();
     } catch (e) {
       developer.log('[DBService] Error loading messages: $e');
@@ -575,17 +577,25 @@ class DBService {
   // ==================== RATE LIMITING (ALWAYS TRUE FOR FREE) ====================
   
   Future<bool> canSendMessage() async {
-    // ALWAYS return true - app is now completely free
     return true;
   }
 
   Future<int> getMessagesUsedInCurrentPeriod() async {
-    // Return 0 to show no limits in UI
-    return 0;
+    try {
+      final db = await database;
+      final periodStart = DateTime.now().millisecondsSinceEpoch - (periodHours * 3600000);
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM usage_logs WHERE timestamp > ?',
+        [periodStart],
+      );
+      return (result.first['count'] as int?) ?? 0;
+    } catch (e) {
+      return 0;
+    }
   }
 
   Future<void> recordMessageSent() async {
-    // Still record for statistics, but no limits
+    // Record for statistics
     try {
       final db = await database;
       final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -599,6 +609,87 @@ class DBService {
     } catch (e) {
       developer.log('[DBService] Error recording message: $e');
     }
+  }
+
+  // ==================== CHAT SEARCH ====================
+
+  Future<List<Chat>> searchChats(String query) async {
+    try {
+      final db = await database;
+      final maps = await db.query(
+        'chats',
+        where: 'title LIKE ?',
+        whereArgs: ['%$query%'],
+        orderBy: 'created_at DESC',
+      );
+      return maps.map(Chat.fromMap).toList();
+    } catch (e) {
+      developer.log('[DBService] Error searching chats: $e');
+      return [];
+    }
+  }
+
+  Future<List<Message>> searchMessages(String chatId, String query) async {
+    try {
+      final db = await database;
+      final maps = await db.query(
+        'messages',
+        where: 'chat_id = ? AND text LIKE ?',
+        whereArgs: [chatId, '%$query%'],
+        orderBy: 'created_at ASC',
+      );
+      return maps.map((e) => Message(
+        id: e['id'] as int? ?? 0,
+        text: e['text'] as String,
+        isUser: e['is_user'] == 1,
+        timestamp: e['created_at'] as int? ?? 0,
+      )).toList();
+    } catch (e) {
+      developer.log('[DBService] Error searching messages: $e');
+      return [];
+    }
+  }
+
+  // ==================== MESSAGE DELETE/UPDATE ====================
+
+  Future<void> deleteMessage(int messageId) async {
+    try {
+      final db = await database;
+      await db.delete('messages', where: 'id = ?', whereArgs: [messageId]);
+    } catch (e) {
+      developer.log('[DBService] Error deleting message: $e');
+    }
+  }
+
+  // ==================== SYSTEM PROMPT ====================
+
+  Future<void> saveSystemPrompt(String chatId, String prompt) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('system_prompt_$chatId', prompt);
+    } catch (e) {
+      developer.log('[DBService] Error saving system prompt: $e');
+    }
+  }
+
+  Future<String?> getSystemPrompt(String chatId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('system_prompt_$chatId');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<void> saveDefaultSystemPrompt(String prompt) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('default_system_prompt', prompt);
+  }
+
+  Future<String> getDefaultSystemPrompt() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('default_system_prompt') ??
+        'You are a helpful, accurate assistant. Be concise and factual.';
   }
 
   // ==================== UTILITY METHODS ====================

@@ -1,4 +1,3 @@
-// lib/screens/home_shell.dart - COMPLETE VERSION
 import 'package:flutter/material.dart';
 import 'package:wazza/screens/chat_list_screen.dart';
 import 'package:wazza/screens/models_screen.dart';
@@ -6,7 +5,10 @@ import 'package:wazza/screens/account_screen.dart';
 import 'package:wazza/models/ai_model.dart';
 
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  final VoidCallback? onToggleTheme;
+  final bool isDarkMode;
+
+  const HomeShell({super.key, this.onToggleTheme, required this.isDarkMode});
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -35,18 +37,17 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _loadInitialScreen() async {
-    // Small delay to ensure everything is loaded
     await Future.delayed(const Duration(milliseconds: 100));
 
     if (AIModel.downloadedModels.isEmpty) {
       setState(() {
-        _currentScreen = WelcomeScreen(onGoToModels: _goToModelsScreen); // Pass callback
+        _currentScreen = WelcomeScreen(onGoToModels: _goToModelsScreen);
         _title = 'Wazza';
         _isLoading = false;
       });
     } else {
       setState(() {
-        _currentScreen = ChatListScreen(onGoToModels: _goToModelsScreen); // Pass callback
+        _currentScreen = ChatListScreen(onGoToModels: _goToModelsScreen);
         _title = 'Chats';
         _isLoading = false;
       });
@@ -62,6 +63,8 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDarkMode;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(_title),
@@ -74,7 +77,11 @@ class _HomeShellState extends State<HomeShell> {
       ),
       drawer: _buildDrawer(context),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(isDark ? Colors.white : Colors.black),
+              ),
+            )
           : _currentScreen ?? _buildDefaultScreen(),
     );
   }
@@ -96,19 +103,44 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Widget _buildDrawer(BuildContext context) {
+    final isDark = widget.isDarkMode;
+
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          const DrawerHeader(
-            decoration: BoxDecoration(color: Colors.white),
-            child: Text(
-              'Wazza',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          DrawerHeader(
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey[900] : Colors.white,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: const Icon(Icons.smart_toy, color: Colors.white, size: 28),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Wazza',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Free, Offline & Private AI',
+                  style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[500] : Colors.grey),
+                ),
+              ],
             ),
           ),
           ListTile(
-            leading: const Icon(Icons.home),
+            leading: const Icon(Icons.home_outlined),
             title: const Text('Home'),
             onTap: () {
               _loadInitialScreen();
@@ -135,9 +167,19 @@ class _HomeShellState extends State<HomeShell> {
             leading: const Icon(Icons.account_circle_outlined),
             title: const Text('Account'),
             onTap: () {
-              _switchTo(const AccountScreen(), 'Account');
+              _switchTo(AccountScreen(onToggleTheme: widget.onToggleTheme, isDarkMode: isDark), 'Account');
               Navigator.pop(context);
             },
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+            title: Text(isDark ? 'Light Mode' : 'Dark Mode'),
+            trailing: Switch(
+              value: isDark,
+              onChanged: (_) => widget.onToggleTheme?.call(),
+            ),
+            onTap: () => widget.onToggleTheme?.call(),
           ),
         ],
       ),
@@ -151,6 +193,8 @@ class WelcomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -172,19 +216,23 @@ class WelcomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 24),
-            const Text(
+            Text(
               'Wazza',
-              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : Colors.black,
+              ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Free, Offline & Private AI.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
+              style: TextStyle(fontSize: 16, color: isDark ? Colors.grey[400] : Colors.grey),
             ),
             const SizedBox(height: 40),
             FilledButton.tonal(
-              onPressed: onGoToModels, // Uses the callback now
+              onPressed: onGoToModels,
               child: const Text('Download Your First Model'),
             ),
             const SizedBox(height: 16),
@@ -194,18 +242,32 @@ class WelcomeScreen extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (_) => Scaffold(
                       appBar: AppBar(title: const Text('How it works')),
-                      body: const Padding(
-                        padding: EdgeInsets.all(16),
+                      body: Padding(
+                        padding: const EdgeInsets.all(16),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            const Text(
                               '• Runs AI models entirely on your device\n'
                               '• No internet required after download\n'
                               '• No account, no tracking\n'
                               '• Share models directly with friends\n'
                               '• All data stays on your phone',
                               style: TextStyle(fontSize: 16),
+                            ),
+                            const SizedBox(height: 24),
+                            const Text(
+                              'Tips:',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              '• Long-press any message to copy, delete, or regenerate\n'
+                              '• Tap the globe icon to enable web search\n'
+                              '• Use the microphone button for voice input\n'
+                              '• Tap the speaker icon on AI messages for text-to-speech\n'
+                              '• Long-press the chat title to edit the system prompt',
+                              style: TextStyle(fontSize: 14),
                             ),
                           ],
                         ),

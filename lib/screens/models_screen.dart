@@ -1,5 +1,3 @@
-// lib/screens/models_screen.dart
-
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:wazza/models/ai_model.dart';
@@ -9,6 +7,7 @@ import 'package:wazza/services/db_service.dart';
 import 'package:wazza/utils/cancel_token.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class ModelsScreen extends StatefulWidget {
   const ModelsScreen({super.key});
@@ -18,12 +17,11 @@ class ModelsScreen extends StatefulWidget {
 }
 
 class _ModelsScreenState extends State<ModelsScreen> {
-  int _refreshTrigger = 0;
+  final Connectivity _connectivity = Connectivity();
 
-  void _refreshScreen() {
-    setState(() {
-      _refreshTrigger++;
-    });
+  Future<bool> _isOnline() async {
+    final results = await _connectivity.checkConnectivity();
+    return results.any((r) => r != ConnectivityResult.none);
   }
 
   Future<void> _importModel() async {
@@ -63,17 +61,12 @@ class _ModelsScreenState extends State<ModelsScreen> {
       }
 
       await sourceFile.copy(destPath);
-
-      // Reconcile to detect the new model
       await DBService().reconcileModels();
-      _refreshScreen();
+      _refresh();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$fileName imported successfully!'),
-            backgroundColor: Colors.green,
-          ),
+          SnackBar(content: Text('$fileName imported successfully!'), backgroundColor: Colors.green),
         );
       }
     } catch (e) {
@@ -85,8 +78,14 @@ class _ModelsScreenState extends State<ModelsScreen> {
     }
   }
 
+  void _refresh() {
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Models'),
@@ -96,48 +95,53 @@ class _ModelsScreenState extends State<ModelsScreen> {
             onPressed: _importModel,
             tooltip: 'Import model from device',
           ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refresh,
+            tooltip: 'Refresh',
+          ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () async {
-          setState(() {});
-          return;
-        },
+        onRefresh: () async => _refresh(),
         child: ListView(
           children: [
             if (AIModel.downloadedModels.isNotEmpty) ...[
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'Your Models',
+                  'Your Models (${AIModel.downloadedModels.length})',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey,
+                    color: isDark ? Colors.grey[400] : Colors.grey,
                   ),
                 ),
               ),
               ...AIModel.downloadedModels.map((m) => _DownloadedModelCard(
                     model: m,
-                    onModelDeleted: _refreshScreen,
+                    onModelDeleted: _refresh,
                   )),
               const Divider(height: 20),
             ],
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Text(
                 'Available Models',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey,
+                  color: isDark ? Colors.grey[400] : Colors.grey,
                 ),
               ),
             ),
-            ...AIModel.remoteModels.map((m) => _RemoteModelCard(
-                  model: m,
-                  onModelDownloaded: _refreshScreen,
-                )),
+            ...AIModel.remoteModels
+                .where((m) => !m.isDownloaded)
+                .map((m) => _RemoteModelCard(
+                      model: m,
+                      onModelDownloaded: _refresh,
+                      checkOnline: _isOnline,
+                    )),
             const SizedBox(height: 20),
           ],
         ),
@@ -153,21 +157,24 @@ class _DownloadedModelCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: isDark ? Colors.grey[850] : null,
       child: ListTile(
         leading: const Icon(Icons.download_done, color: Colors.green),
-        title: Text(model.name),
+        title: Text(model.name, style: TextStyle(color: isDark ? Colors.white : null)),
         subtitle: Text('${model.sizeMB} MB • ${model.quant}'),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: const Icon(Icons.share, size: 18),
+              icon: Icon(Icons.share, size: 18, color: isDark ? Colors.grey[400] : null),
               onPressed: () => _shareModel(context, model),
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline, size: 18),
+              icon: Icon(Icons.delete_outline, size: 18, color: isDark ? Colors.grey[400] : null),
               onPressed: () => _deleteModel(context, model),
             ),
           ],
@@ -183,10 +190,7 @@ class _DownloadedModelCard extends StatelessWidget {
         title: const Text('Delete Model'),
         content: Text('Delete ${model.name}? This will free up ${model.sizeMB}MB.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -203,22 +207,16 @@ class _DownloadedModelCard extends StatelessWidget {
 
       if (model.localPath != null) {
         final file = File(model.localPath!);
-        if (await file.exists()) {
-          await file.delete();
-        }
+        if (await file.exists()) await file.delete();
       }
 
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${model.name} deleted')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${model.name} deleted')));
         onModelDeleted?.call();
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete failed: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
       }
     }
   }
@@ -228,15 +226,14 @@ class _DownloadedModelCard extends StatelessWidget {
 
     try {
       final file = XFile(model.localPath!);
+      // ignore: deprecated_member_use
       await Share.shareXFiles([file],
         text: 'Check out this AI model for Wazza: ${model.name}',
         subject: 'Wazza AI Model',
       );
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Share failed: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Share failed: $e')));
       }
     }
   }
@@ -245,13 +242,19 @@ class _DownloadedModelCard extends StatelessWidget {
 class _RemoteModelCard extends StatefulWidget {
   final AIModel model;
   final VoidCallback? onModelDownloaded;
-  const _RemoteModelCard({required this.model, this.onModelDownloaded});
+  final Future<bool> Function() checkOnline;
+
+  const _RemoteModelCard({
+    required this.model,
+    this.onModelDownloaded,
+    required this.checkOnline,
+  });
 
   @override
-  State<_RemoteModelCard> createState() => __RemoteModelCardState();
+  State<_RemoteModelCard> createState() => _RemoteModelCardState();
 }
 
-class __RemoteModelCardState extends State<_RemoteModelCard> {
+class _RemoteModelCardState extends State<_RemoteModelCard> {
   bool _isDownloading = false;
   int _downloadProgress = 0;
   int _downloadedBytes = 0;
@@ -264,14 +267,20 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
     super.dispose();
   }
 
-  void _safeSetState(VoidCallback fn) {
-    if (mounted) setState(fn);
-  }
-
   Future<void> _downloadModel() async {
     if (AIModel.listDownloaded(widget.model.id) || widget.model.isDownloaded || _isDownloading) return;
 
-    _safeSetState(() {
+    final online = await widget.checkOnline();
+    if (!online) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No internet connection. Connect to the internet first.')),
+        );
+      }
+      return;
+    }
+
+    setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
       _downloadedBytes = 0;
@@ -283,38 +292,31 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
       final savedPath = await ModelDownloader.downloadModel(
         model: widget.model,
         onProgress: (progress, downloaded, total) {
-          _safeSetState(() {
-            _downloadProgress = progress;
-            _downloadedBytes = downloaded;
-            _totalBytes = total;
-          });
+          if (mounted) {
+            setState(() {
+              _downloadProgress = progress;
+              _downloadedBytes = downloaded;
+              _totalBytes = total;
+            });
+          }
         },
         cancelToken: _cancelToken!,
       );
 
       AIModel.markAsDownloaded(widget.model, savedPath);
       await DBService().saveDownloadedModel(AIModel.downloadedModels.last);
-      
-      _safeSetState(() {
-        _isDownloading = false;
-      });
-      
+
       if (mounted) {
+        setState(() => _isDownloading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${widget.model.name} downloaded!'),
-            backgroundColor: Colors.green,
-          ),
+          SnackBar(content: Text('${widget.model.name} downloaded!'), backgroundColor: Colors.green),
         );
         widget.onModelDownloaded?.call();
       }
     } catch (e) {
-      _safeSetState(() {
-        _isDownloading = false;
-      });
-      
-      final errorMsg = e.toString();
       if (mounted) {
+        setState(() => _isDownloading = false);
+        final errorMsg = e.toString();
         if (errorMsg.contains('cancelled')) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Download cancelled')),
@@ -325,17 +327,17 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
           );
         }
       }
-    } finally {
-      _cancelToken = null;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final isDownloaded = AIModel.listDownloaded(widget.model.id) || widget.model.isDownloaded;
-    
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: isDark ? Colors.grey[850] : null,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -343,36 +345,34 @@ class __RemoteModelCardState extends State<_RemoteModelCard> {
           children: [
             Text(
               widget.model.name,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 16,
+                color: isDark ? Colors.white : null,
               ),
             ),
             const SizedBox(height: 4),
             Text(
               '${widget.model.sizeMB} MB • ${widget.model.quant}',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.grey,
-              ),
+              style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[500] : Colors.grey),
             ),
             const SizedBox(height: 8),
             Text(
               widget.model.description,
-              style: const TextStyle(fontSize: 14),
+              style: TextStyle(fontSize: 14, color: isDark ? Colors.grey[400] : null),
             ),
             const SizedBox(height: 12),
             if (_isDownloading)
               Column(
                 children: [
                   LinearProgressIndicator(
-                    value: _downloadProgress / 100,
+                    value: _totalBytes > 0 ? _downloadProgress / 100 : null,
                     backgroundColor: Colors.grey[200],
                   ),
                   const SizedBox(height: 8),
                   Text(
                     '$_downloadProgress% • ${(_downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} MB',
-                    style: const TextStyle(fontSize: 12),
+                    style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[400] : null),
                   ),
                   const SizedBox(height: 8),
                   OutlinedButton(

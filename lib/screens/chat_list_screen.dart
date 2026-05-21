@@ -1,4 +1,3 @@
-// lib/screens/chat_list_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:wazza/models/ai_model.dart';
@@ -16,8 +15,11 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   List<Chat> _chats = [];
+  List<Chat> _filteredChats = [];
   bool _isLoading = true;
   final DBService _dbService = DBService();
+  final TextEditingController _searchController = TextEditingController();
+  bool _isSearching = false;
 
   @override
   void initState() {
@@ -25,27 +27,41 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _loadChats();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadChats() async {
-    setState(() {
-      _isLoading = true;
-    });
-    
+    setState(() => _isLoading = true);
     final chats = await _dbService.getChats();
-    
     if (mounted) {
       setState(() {
         _chats = chats;
+        _filteredChats = chats;
         _isLoading = false;
       });
     }
   }
 
-  Future<void> _deleteChat(BuildContext context, Chat chat) async {
-    // Store the context locally before async operations
-    final currentContext = context;
-    
+  void _onSearchChanged(String query) {
+    setState(() {
+      _isSearching = query.isNotEmpty;
+      if (query.isEmpty) {
+        _filteredChats = _chats;
+      } else {
+        final lower = query.toLowerCase();
+        _filteredChats = _chats.where((c) =>
+          c.title.toLowerCase().contains(lower)
+        ).toList();
+      }
+    });
+  }
+
+  Future<void> _deleteChat(Chat chat) async {
     final confirmed = await showDialog<bool>(
-      context: currentContext,
+      context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Chat'),
         content: Text('Are you sure you want to delete "${chat.title}"?'),
@@ -68,13 +84,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  Future<void> _renameChat(BuildContext context, Chat chat) async {
-    // Store the context locally before async operations
-    final currentContext = context;
+  Future<void> _renameChat(Chat chat) async {
     final controller = TextEditingController(text: chat.title);
-    
     final newTitle = await showDialog<String>(
-      context: currentContext,
+      context: context,
       builder: (context) => AlertDialog(
         title: const Text('Rename Chat'),
         content: TextField(
@@ -106,13 +119,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<AIModel?> _getDefaultModel() async {
     final models = AIModel.downloadedModels;
-    if (models.isNotEmpty) {
-      return models[0];
-    }
+    if (models.isNotEmpty) return models[0];
     return null;
   }
 
-  void _startNewChat(BuildContext context, AIModel? model) {
+  void _startNewChat(AIModel? model) {
     if (model == null) {
       widget.onGoToModels();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -120,20 +131,19 @@ class _ChatListScreenState extends State<ChatListScreen> {
       );
       return;
     }
-    
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ChatScreen(initialModel: model),
       ),
-    );
+    ).then((_) => _loadChats());
   }
 
   void _openChat(Chat chat) async {
     final model = await _getDefaultModel();
-    
     if (!mounted) return;
-    
+
     if (model == null) {
       widget.onGoToModels();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -141,20 +151,19 @@ class _ChatListScreenState extends State<ChatListScreen> {
       );
       return;
     }
-    
+
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ChatScreen(
-          existingChat: chat,
-          initialModel: model,
-        ),
+        builder: (context) => ChatScreen(existingChat: chat, initialModel: model),
       ),
-    );
+    ).then((_) => _loadChats());
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chats'),
@@ -169,139 +178,175 @@ class _ChatListScreenState extends State<ChatListScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           final model = await _getDefaultModel();
-          if (mounted) {
-            _startNewChat(context, model);
-          }
+          if (mounted) _startNewChat(model);
         },
         child: const Icon(Icons.add),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _chats.isEmpty
-              ? _buildEmptyState()
-              : RefreshIndicator(
-                  onRefresh: _loadChats,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(8),
-                    itemCount: _chats.length,
-                    itemBuilder: (context, index) {
-                      final chat = _chats[index];
-                      final time = DateTime.fromMillisecondsSinceEpoch(chat.createdAt);
-                      final timeString = '${time.hour}:${time.minute.toString().padLeft(2, '0')}';
-                      
-                      return Dismissible(
-                        key: Key(chat.id),
-                        background: Container(
-                          color: Colors.red,
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 20),
-                          child: const Icon(Icons.delete, color: Colors.white),
-                        ),
-                        confirmDismiss: (direction) async {
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('Delete Chat'),
-                              content: Text('Are you sure you want to delete "${chat.title}"?'),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, false),
-                                  child: const Text('Cancel'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                                ),
-                              ],
-                            ),
-                          );
-                          return confirmed ?? false;
-                        },
-                        onDismissed: (direction) async {
-                          await _dbService.deleteChat(chat.id);
-                          if (mounted) {
-                            await _loadChats();
-                          }
-                        },
-                        child: Card(
-                          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.chat, size: 20),
-                            ),
-                            title: Text(
-                              chat.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w500),
-                            ),
-                            subtitle: Text(
-                              'Created at $timeString',
-                              style: TextStyle(color: Colors.grey[600]),
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (value) {
-                                if (value == 'rename') {
-                                  _renameChat(context, chat);
-                                } else if (value == 'delete') {
-                                  _deleteChat(context, chat);
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'rename',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.edit, size: 20),
-                                      SizedBox(width: 8),
-                                      Text('Rename'),
-                                    ],
-                                  ),
-                                ),
-                                const PopupMenuItem(
-                                  value: 'delete',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.delete, size: 20, color: Colors.red),
-                                      SizedBox(width: 8),
-                                      Text('Delete', style: TextStyle(color: Colors.red)),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            onTap: () => _openChat(chat),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+      body: Column(
         children: [
-          const Icon(Icons.chat, size: 64, color: Colors.grey),
-          const SizedBox(height: 16),
-          const Text(
-            'No Chats Yet',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: TextField(
+              controller: _searchController,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Search chats...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _isSearching
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          _onSearchChanged('');
+                        },
+                      )
+                    : null,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: isDark ? Colors.grey[800] : Colors.grey[100],
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Start a conversation by tapping the + button',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: widget.onGoToModels,
-            icon: const Icon(Icons.download),
-            label: const Text('Download a Model'),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredChats.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _isSearching ? Icons.search_off : Icons.chat,
+                              size: 64,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _isSearching ? 'No chats found' : 'No Chats Yet',
+                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                            ),
+                            if (!_isSearching) ...[
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Start a conversation by tapping the + button',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                              const SizedBox(height: 24),
+                              ElevatedButton.icon(
+                                onPressed: widget.onGoToModels,
+                                icon: const Icon(Icons.download),
+                                label: const Text('Download a Model'),
+                              ),
+                            ],
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _loadChats,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(8),
+                          itemCount: _filteredChats.length,
+                          itemBuilder: (context, index) {
+                            final chat = _filteredChats[index];
+                            final time = DateTime.fromMillisecondsSinceEpoch(chat.createdAt);
+                            final timeString = '${time.hour}:${time.minute.toString().padLeft(2, '0')}';
+
+                            return Dismissible(
+                              key: Key(chat.id),
+                              background: Container(
+                                color: Colors.red,
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 20),
+                                child: const Icon(Icons.delete, color: Colors.white),
+                              ),
+                              confirmDismiss: (direction) async {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Delete Chat'),
+                                    content: Text('Are you sure you want to delete "${chat.title}"?'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, true),
+                                        child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                return confirmed ?? false;
+                              },
+                              onDismissed: (direction) async {
+                                await _dbService.deleteChat(chat.id);
+                                if (mounted) await _loadChats();
+                              },
+                              child: Card(
+                                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                color: isDark ? Colors.grey[850] : null,
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: isDark ? Colors.grey[700] : null,
+                                    child: Icon(Icons.chat, size: 20, color: isDark ? Colors.white : null),
+                                  ),
+                                  title: Text(
+                                    chat.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      color: isDark ? Colors.white : null,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${chat.messageCount} msgs • $timeString',
+                                    style: TextStyle(color: isDark ? Colors.grey[500] : Colors.grey[600]),
+                                  ),
+                                  trailing: PopupMenuButton<String>(
+                                    onSelected: (value) {
+                                      if (value == 'rename') {
+                                        _renameChat(chat);
+                                      } else if (value == 'delete') {
+                                        _deleteChat(chat);
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      const PopupMenuItem(
+                                        value: 'rename',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.edit, size: 20),
+                                            SizedBox(width: 8),
+                                            Text('Rename'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.delete, size: 20, color: Colors.red),
+                                            SizedBox(width: 8),
+                                            Text('Delete', style: TextStyle(color: Colors.red)),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  onTap: () => _openChat(chat),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
           ),
         ],
       ),
