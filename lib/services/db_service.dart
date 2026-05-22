@@ -265,12 +265,31 @@ class DBService {
       final sizeMB = stats.size ~/ (1024 * 1024);
       final fileName = basename(file.path);
       final fileNameWithoutExt = fileName.replaceAll(RegExp(r'\.(gguf|bin|model)$'), '');
-      
-      // Try to infer model details from filename
+      final lowerName = fileNameWithoutExt.toLowerCase();
+
+      final remoteMatch = AIModel.remoteModels.cast<AIModel?>().firstWhere(
+        (m) => m != null && lowerName.contains(m.id.toLowerCase()),
+        orElse: () => null,
+      );
+
+      if (remoteMatch != null) {
+        return AIModel(
+          id: remoteMatch.id,
+          name: remoteMatch.name,
+          sizeMB: sizeMB,
+          quant: remoteMatch.quant,
+          isDownloaded: true,
+          localPath: file.path,
+          templateType: remoteMatch.templateType,
+          description: remoteMatch.description,
+          bestFor: remoteMatch.bestFor,
+        );
+      }
+
       final (quant, templateType) = _inferModelDetails(fileNameWithoutExt);
-      
+
       return AIModel(
-        id: 'custom_${fileNameWithoutExt.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_')}',
+        id: 'custom_${lowerName.replaceAll(RegExp(r'[^a-z0-9]'), '_')}',
         name: _formatModelName(fileNameWithoutExt),
         sizeMB: sizeMB,
         quant: quant,

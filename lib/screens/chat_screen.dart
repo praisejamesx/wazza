@@ -262,7 +262,7 @@ class _ChatScreenState extends State<ChatScreen> {
             );
           }
         },
-        listenFor: const Duration(seconds: 30),
+        listenOptions: stt.SpeechListenOptions(listenFor: const Duration(seconds: 30)),
       );
     } catch (e) {
       if (mounted) {
@@ -546,14 +546,6 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          IconButton(
-            icon: Icon(
-              _useSearch ? Icons.language : Icons.language_outlined,
-              color: _useSearch ? Colors.blue : null,
-            ),
-            tooltip: _useSearch ? 'Search enabled' : 'Search disabled',
-            onPressed: () => setState(() => _useSearch = !_useSearch),
-          ),
           FutureBuilder<int>(
             future: _dbService.getMessagesUsedInCurrentPeriod(),
             builder: (context, snapshot) {

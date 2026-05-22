@@ -304,7 +304,11 @@ class _RemoteModelCardState extends State<_RemoteModelCard> {
       );
 
       AIModel.markAsDownloaded(widget.model, savedPath);
-      await DBService().saveDownloadedModel(AIModel.downloadedModels.last);
+      final modelToSave = AIModel.downloadedModels.firstWhere(
+        (m) => m.id == widget.model.id,
+        orElse: () => widget.model,
+      );
+      await DBService().saveDownloadedModel(modelToSave);
 
       if (mounted) {
         setState(() => _isDownloading = false);

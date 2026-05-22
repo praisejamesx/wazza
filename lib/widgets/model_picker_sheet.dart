@@ -145,7 +145,7 @@ class _ModelTile extends StatelessWidget {
     if (result == false) return;
 
     try {
-      await ModelDownloader.downloadModel(
+      final savedPath = await ModelDownloader.downloadModel(
         model: model,
         onProgress: (p, d, t) {
           if (Navigator.of(context, rootNavigator: false).canPop()) {
@@ -158,12 +158,12 @@ class _ModelTile extends StatelessWidget {
         cancelToken: cancelToken,
       );
 
-      AIModel.markAsDownloaded(model, await ModelDownloader.getModelsDirectory().then((dir) => '${dir.path}/${model.id}.gguf'));
-      final db = DBService();
-      final downloadedModels = await db.getDownloadedModels();
-      if (downloadedModels.isNotEmpty) {
-        await db.saveDownloadedModel(downloadedModels.last);
-      }
+      AIModel.markAsDownloaded(model, savedPath);
+      final modelToSave = AIModel.downloadedModels.firstWhere(
+        (m) => m.id == model.id,
+        orElse: () => model,
+      );
+      await DBService().saveDownloadedModel(modelToSave);
 
       if (context.mounted) {
         Navigator.pop(context);
