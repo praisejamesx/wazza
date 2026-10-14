@@ -1,69 +1,65 @@
-# Wazza — Local LLM Chat App
+# Wazza
 
-**Run powerful AI models on your phone. 100% offline. 100% private. 100% free.**
+An offline, on-device chat app for Android. Download a GGUF model once, then chat with it locally — no account, no API key, no server.
 
-[![Stars](https://img.shields.io/github/stars/praisejamesx/wazza)](https://github.com/praisejamesx/wazza)
-[![Forks](https://img.shields.io/github/forks/praisejamesx/wazza)](https://github.com/praisejamesx/wazza)
-[![License](https://img.shields.io/github/license/praisejamesx/wazza)](LICENSE)
+## What it does
 
-Wazza lets you **download any GGUF/llama.cpp compatible model** and chat with it locally on your device. No internet after the first download. No data leaves your phone.
+- **Local inference** — runs GGUF models on your phone via llama.cpp (`llama_flutter_android`).
+- **Model catalog** — browse and download a handful of small models in-app (SmolLM2, Qwen2.5, Gemma 2, Phi-3.5/4, Llama 3.2 3B).
+- **Bring your own model** — the app scans its `models` and `shared_models` folders for `.gguf` files and adds them automatically.
+- **Chat** — streaming replies, markdown rendering, copy, per-chat history, and a model switcher.
+- **Voice** — speech-to-text input and text-to-speech for replies.
+- **Encrypted storage** — chats and messages are stored in a local encrypted database (Drift + `encrypted_drift`).
+- **Monochrome UI** — black-and-white theme with light and dark modes.
 
-### Why Wazza Slaps Harder Than Cloud LLMs
-- **Truly offline** — works on a plane, in the village, during blackout
-- **Privacy-first** — your chats never touch a server
-- **Free forever** — no API keys, no subscriptions
-- **Cross-platform** — one codebase, everywhere
-- **Model marketplace inside the app** — download Mistral, Llama 3, Phi-3, Gemma, whatever you want
-- **Lightning chat UI** — beautiful, fast, feels like the big boys but runs on your hardware
+## Platform
 
-### Future Expansion
-Wazza is not just a chat app. It's becoming the **platform** for local AI apps.
+Android only for now. The inference backend is Android-specific, so iOS and desktop are not supported.
 
-Imagine:
-- **Exam Prep Mode** — upload your notes/PDFs → AI tutor quizzes you offline
-- **Prompt Vault** — community-curated prompt library (saved locally)
-- **Plugin System** — build mini-apps on top of Wazza (productivity tools, language tutors, coding assistants, meme generators…)
-- **Voice + Vision** — coming soon
-- **Multi-model orchestration** — run multiple models at once
+## Getting started
 
+### From a release
+1. Get the latest `app-release.7z` from Releases.
+2. Extract and install the APK.
+3. Open Wazza, download a model, and start chatting.
 
-### Quick Start (Android right now — more coming)
-1. Download the latest `app-release.7z` from Releases
-2. Extract and install the APK
-3. Open Wazza → browse & download models → start chatting
+### From source
+```bash
+flutter pub get
+flutter run            # on a connected Android device
+```
 
-**iOS / Desktop builds dropping this week.**
+Requires Flutter 3.35+ and an Android device or emulator. The first build compiles the native llama.cpp library, so it takes a while.
 
-### Tech Stack
-- Flutter (Dart) + cross-platform magic
-- Local inference (llama.cpp / GGUF support)
-- Fully offline-first architecture
+## Models
 
-### Roadmap (Public & Aggressive)
-- [ ] iOS & Desktop official builds
-- [ ] Plugin system + app store inside Wazza
-- [ ] Exam Prep & Education suite
-- [ ] Voice mode + image understanding
-- [ ] One-click model sharing
-- [ ] Community Prompt Vault
+Models are downloaded from their Hugging Face URLs into the app's documents directory. Bigger models are slower and use more RAM; pick based on your device:
 
-### How You Can Make Wazza Insane (Contributors Wanted)
-We need **thousands of eyes and hundreds of hands**:
-- **Star + Fork** this repo RIGHT NOW (it literally helps the algorithm)
-- **Build features** — exam prep, prompts, plugins, themes, anything
-- **Test on your device** and open issues
-- **Spread the word** — every share = more contributors
+| Size | Examples | Notes |
+| --- | --- | --- |
+| Under 500 MB | SmolLM2 135M/360M, Qwen2.5 0.5B | Fast, good for testing |
+| 0.5–1.5 GB | SmolLM2 1.7B, Qwen2.5 1.5B, Gemma 2 2B | Good everyday balance |
+| 1.5–3 GB | Phi-3.5 Mini, Qwen2.5 3B, Llama 3.2 3B | Better quality, heavier |
+| 3 GB+ | Phi-4 Mini, Qwen2.5 7B | Needs a capable device |
 
-open a PR. The repo is wide open.
+## Tech stack
 
-### Support
+- **Flutter** + **Riverpod** for state management
+- **go_router** for navigation
+- **Drift** (encrypted) for storage
+- **llama_flutter_android** for local inference
 
-If Wazza is saving you money/time/privacy, buy a coffee to support the shipping of crazy updates:
+## Development
 
-**[☕ Buy Me a Coffee](https://selar.com/showlove/praisejamesx)**
+```bash
+dart analyze     # static analysis
+flutter test     # unit tests
+```
 
-**Or send Bitcoin: bc1qfqp6pg6fcrf4zfndd55fvjcrregkzfalt2vfj8**
+## Status
 
----
+Early-stage and Android-only. Performance and supported models depend on your device's RAM and chip.
 
-Let's make local AI the default.
+## License
+
+No license file is included yet.
